@@ -9,7 +9,7 @@
 import os
 import sys
 
-# 将项目根目录加入搜索路径，保证 src.* 导入生效
+# 将项目根目录加入搜索路径，保证 src.* 导入生效，如果main.py不在src里，就不用加这一条
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.game import Game
@@ -25,3 +25,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
