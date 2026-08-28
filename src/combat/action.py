@@ -1,23 +1,18 @@
 """
 战斗行动模块。
 
-功能说明：
-    定义回合制战斗中所有可执行行动的基类与子类。每个 Action 携带
-    actor（执行者）、cost（AP 消耗）、execute()（执行效果）。
-    BattleManager 按顺序执行 Action 队列。
-
-行动类型与 AP 消耗（PRD 第 4.3 节）：
-    MoveAction       1 AP/格
-    AttackAction     2 AP
-    SkillAction      3 AP  （Day 5 接入）
-    UseItemAction    1 AP  （Day 7 接入）
-    EndTurnAction    0 AP  （自动切回合）
+Day 5 扩展：
+    - AttackAction 接入 damage.apply_damage()，真正扣血
+    - AttackAction 支持 multiplier（技能倍率），与玩家选中技能联动
+    - 伤害结果通过 manager.last_damage_result 暴露给 UI 生成飘字
+    - 添加 SkillAction 接入伤害计算
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from src.combat.damage import apply_damage
 from src.utils.vector import Vector2
 
 if TYPE_CHECKING:
@@ -34,7 +29,6 @@ class Action(ABC):
 
     @abstractmethod
     def execute(self, manager: "BattleManager") -> None:
-        """在 BattleManager 上下文中执行此行动。"""
         pass
 
     def __repr__(self) -> str:
@@ -44,7 +38,7 @@ class Action(ABC):
 # ========== 移动行动 ==========
 
 class MoveAction(Action):
-    """移动到目标瓦片。Day 4 仅改坐标，Day 5+ 可能触发陷阱。"""
+    """移动到目标瓦片。"""
 
     def __init__(self, actor: "Entity", target: Vector2, ap_cost: int = 1):
         super().__init__(actor, ap_cost)
@@ -58,32 +52,74 @@ class MoveAction(Action):
 
 class AttackAction(Action):
     """
-    对目标实体进行基础攻击。
-    Day 4：只扣 AP，不真正造成伤害（Day 5 接入 damage 公式）。
+    对目标实体进行攻击。
+    Day 5：调用 damage.apply_damage() 真正扣血，
+    结果存入 manager.last_damage_result 供 UI 生成飘字。
     """
 
-    def __init__(self, actor: "Entity", target: "Entity", ap_cost: int = 2):
+    def __init__(
+        self,
+        actor: "Entity",
+        target: "Entity",
+        ap_cost: int = 2,
+        multiplier: float = 1.0,
+        skill_name: str = "攻击",
+    ):
         super().__init__(actor, ap_cost)
         self.target = target
+        self.multiplier = multiplier
+        self.skill_name = skill_name
 
     def execute(self, manager: "BattleManager") -> None:
-        # Day 5 会调用 damage.calculate() 并对 target.stats.take_damage()
-        # Day 4 占位：仅记录一次"攻击发生"
-        manager.last_action_desc = f"{self.actor.name} 攻击 {self.target.name}"
+        # 计算伤害并扣血
+        result = apply_damage(self.actor, self.target, self.multiplier)
+        # 暴击描述
+        crit_str = " 暴击!" if result.is_crit else ""
+        manager.last_action_desc = (
+            f"{self.actor.name} 使用 {self.skill_name} → "
+            f"{self.target.name} -{result.damage} HP{crit_str}"
+        )
+        # 暴露给 UI 用于飘字
+        manager.last_damage_result = result
+        manager.last_damage_target = self.target
 
 
-# ========== 技能行动（Day 5 接入） ==========
+# ========== 技能行动 ==========
 
 class SkillAction(Action):
-    """使用主动技能。Day 5 实现具体技能效果。"""
+    """
+    使用主动技能。Day 5 接入伤害计算。
+    技能效果通过 multiplier 区分（基础攻击 1.0×，冲锋斩 1.8×，火球术 2.0×）。
+    """
 
-    def __init__(self, actor: "Entity", target: "Entity | None", skill_id: str, ap_cost: int = 3):
+    def __init__(
+        self,
+        actor: "Entity",
+        target: "Entity | None",
+        skill_id: str,
+        multiplier: float,
+        ap_cost: int = 3,
+        skill_name: str = "技能",
+    ):
         super().__init__(actor, ap_cost)
         self.target = target
         self.skill_id = skill_id
+        self.multiplier = multiplier
+        self.skill_name = skill_name
 
     def execute(self, manager: "BattleManager") -> None:
-        manager.last_action_desc = f"{self.actor.name} 释放技能 {self.skill_id}"
+        if self.target is None:
+            manager.last_action_desc = f"{self.actor.name} 释放 {self.skill_name}（无目标）"
+            return
+        # 与 AttackAction 共用伤害逻辑
+        result = apply_damage(self.actor, self.target, self.multiplier)
+        crit_str = " 暴击!" if result.is_crit else ""
+        manager.last_action_desc = (
+            f"{self.actor.name} 释放 {self.skill_name} → "
+            f"{self.target.name} -{result.damage} HP{crit_str}"
+        )
+        manager.last_damage_result = result
+        manager.last_damage_target = self.target
 
 
 # ========== 道具行动（Day 7 接入） ==========
@@ -102,7 +138,7 @@ class UseItemAction(Action):
 # ========== 结束回合 ==========
 
 class EndTurnAction(Action):
-    """结束当前回合，不消耗 AP。"""
+    """结束当前回合。"""
 
     def __init__(self, actor: "Entity"):
         super().__init__(actor, ap_cost=0)

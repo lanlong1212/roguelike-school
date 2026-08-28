@@ -1,26 +1,26 @@
 """
 游戏进行中状态模块。
 
-Day 4 内容：
-    - 双模式：EXPLORE 探索 / BATTLE 战斗
-    - 进入 BATTLE/BOSS 房间 → 触发战斗 → 生成 1-2 个占位 Enemy
-    - 战斗中：BFS 计算可移动范围（蓝）/可攻击范围（红），鼠标点击执行
-    - 战斗中：WASD 不再生效，改为点击移动；空格/回车结束回合
-    - AP 归零或结束回合 → 切到敌人回合（Day 4 敌人不动立即切回）
-    - HUD 增加回合数 + 最近行动描述
+Day 5 扩展：
+    - AttackAction 接入伤害公式，攻击真正扣血
+    - 数字键 1/2/3 切换技能（基础攻击/冲锋斩/火球术）
+    - 攻击范围按技能 range_cells 计算（火球术 5 格远程）
+    - 伤害飘字系统：攻击命中后生成飘字，1 秒上浮渐隐
+    - 敌人死亡后从攻击范围移除
 """
 from __future__ import annotations
 
 from collections import deque
 from enum import Enum, auto
+from typing import Optional
 
 import pygame
 
-from src.combat.action import AttackAction, EndTurnAction, MoveAction
+from src.combat.action import AttackAction, EndTurnAction, MoveAction, SkillAction
 from src.combat.battle_manager import BattleManager, TurnPhase
 from src.core import config
 from src.entities.enemy import Enemy
-from src.entities.player import Player
+from src.entities.player import Player, Skill
 from src.states.base_state import BaseState
 from src.utils.vector import Vector2
 from src.world.floor import Floor
@@ -44,6 +44,38 @@ _ROOM_TYPE_LABEL: dict[RoomType, tuple[str, tuple[int, int, int]]] = {
     RoomType.REST:   ("休", (120, 220, 120)),
     RoomType.START:  ("始", config.COLOR_PLAYER),
 }
+
+
+# ========== 飘字系统 ==========
+class FloatingText:
+    """伤害飘字。从目标位置上浮并渐隐。"""
+
+    __slots__ = ("text", "x", "y", "color", "age", "lifetime", "vy")
+
+    def __init__(self, text: str, x: float, y: float, color: tuple[int, int, int]):
+        self.text = text
+        self.x = x          # 屏幕像素坐标
+        self.y = y
+        self.color = color
+        self.age = 0.0      # 存活时间
+        self.lifetime = 1.0  # 总存活秒数
+        self.vy = -40       # 上浮速度（像素/秒）
+
+    def update(self, dt: float) -> bool:
+        """更新飘字，返回是否还存活。"""
+        self.age += dt
+        self.y += self.vy * dt
+        return self.age < self.lifetime - 0.001  # 浮点余量，避免卡在边界
+
+    def draw(self, screen, font) -> None:
+        """绘制飘字。alpha 随存活时间衰减。"""
+        if self.age >= self.lifetime:
+            return
+        # 透明度：0→1.0 期间从 255 衰减到 0
+        alpha = int(255 * (1 - self.age / self.lifetime))
+        text_surf = font.render(self.text, True, self.color)
+        text_surf.set_alpha(alpha)
+        screen.blit(text_surf, (int(self.x), int(self.y)))
 
 
 class PlayMode(Enum):
@@ -71,6 +103,10 @@ class PlayState(BaseState):
         # 玩家当前所在房间（用于触发战斗）
         self._current_room: Room | None = None
         self._battles_triggered: set[int] = set()  # 已触发战斗的房间 id
+        # Day 5：飘字列表与技能 UI 状态
+        self._floating_texts: list[FloatingText] = []
+        # 数字键 1/2/3 选技能；选中后点击红格释放；选中移动模式时点击蓝格移动
+        self._selected_skill_index: int = 0  # 0=基础攻击（默认）
 
     # ========== 生命周期 ==========
 
@@ -109,13 +145,33 @@ class PlayState(BaseState):
                     if self.battle and self.battle.is_player_turn:
                         self.battle.end_player_turn()
                         self._after_player_action()
+                # 数字键 1/2/3 切换技能
+                elif event.key == pygame.K_1:
+                    self._selected_skill_index = 0
+                    self._compute_battle_highlights()
+                elif event.key == pygame.K_2:
+                    if len(self.player.skills) > 1:
+                        self._selected_skill_index = 1
+                        self._compute_battle_highlights()
+                elif event.key == pygame.K_3:
+                    if len(self.player.skills) > 2:
+                        self._selected_skill_index = 2
+                        self._compute_battle_highlights()
+                # M 键切回移动模式（不消耗 AP 选择）
+                elif event.key == pygame.K_m:
+                    self._selected_skill_index = -1  # -1 = 移动模式
+                    self._compute_battle_highlights()
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.mode == PlayMode.BATTLE:
                 self._handle_battle_click(event.pos)
 
     def update(self, dt):
-        """每帧推进敌人回合（Day 4 立即结束）。"""
+        """每帧推进敌人回合 + 飘字动画。"""
+        # 飘字更新（无论何种模式）
+        if self._floating_texts:
+            self._floating_texts = [t for t in self._floating_texts if t.update(dt)]
+
         if self.mode == PlayMode.BATTLE and self.battle:
             if self.battle.is_enemy_turn:
                 self.battle.step_enemy_turn()
@@ -176,7 +232,10 @@ class PlayState(BaseState):
         self._compute_battle_highlights()
 
     def _compute_battle_highlights(self) -> None:
-        """BFS 计算玩家可移动范围（按 move_range 限制）与可攻击目标。"""
+        """
+        BFS 计算玩家可移动范围（按 move_range 限制）与可攻击目标。
+        Day 5：攻击范围按当前选中技能的 range_cells 计算。
+        """
         assert self.player and self.floor and self.battle
         self._move_range.clear()
         self._attack_targets.clear()
@@ -184,12 +243,11 @@ class PlayState(BaseState):
         start = self.player.grid_pos
         move_range = self.player.stats.move_range
         tilemap = self.floor.tilemap
-        # 敌人位置集合
         enemy_pos = {e.grid_pos: e for e in self.battle.enemies if not e.stats.is_dead()}
 
-        # BFS：每个格子记录到达它的最小步数
+        # --- 移动范围 BFS（始终计算，M 键切移动模式时用） ---
         visited = {start: 0}
-        self._move_range[start] = 0  # 自身位置算 0 步
+        self._move_range[start] = 0
         queue = deque([(start, 0)])
         while queue:
             (gx, gy), dist = queue.popleft()
@@ -201,24 +259,38 @@ class PlayState(BaseState):
                     continue
                 if not tilemap.is_walkable(nx, ny):
                     continue
-                # 被敌人占据的格子不能移动到，但可以攻击
+                # 被敌人占据的格子不能移动到，但 BFS 可以穿过敌人记录距离
                 if (nx, ny) in enemy_pos:
-                    self._attack_targets[(nx, ny)] = enemy_pos[(nx, ny)]
                     visited[(nx, ny)] = dist + 1
                     continue
                 visited[(nx, ny)] = dist + 1
                 self._move_range[(nx, ny)] = dist + 1
                 queue.append(((nx, ny), dist + 1))
 
-        # 额外：玩家相邻 1 格的敌人也可攻击（即便不在移动范围内）
+        # --- 攻击范围：按当前技能 range_cells ---
+        # _selected_skill_index = -1 表示纯移动模式，不显示攻击范围
+        if self._selected_skill_index < 0:
+            return
+        skills = self.player.skills
+        if self._selected_skill_index >= len(skills):
+            return
+        skill = skills[self._selected_skill_index]
+        attack_range = skill.range_cells
+
+        # BFS 从玩家位置出发，找攻击范围内所有敌人
+        # 距离用切比雪夫距离（8 方向），range_cells=1 即相邻 8 格
         px, py = start
-        for dx, dy in [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]:
-            nx, ny = px + dx, py + dy
-            if (nx, ny) in enemy_pos:
-                self._attack_targets[(nx, ny)] = enemy_pos[(nx, ny)]
+        for (ex, ey), enemy in enemy_pos.items():
+            dist = max(abs(ex - px), abs(ey - py))  # 切比雪夫距离
+            if dist <= attack_range:
+                self._attack_targets[(ex, ey)] = enemy
 
     def _handle_battle_click(self, mouse_pos: tuple[int, int]) -> None:
-        """战斗中鼠标点击：蓝色移动 / 红色攻击 / 其他忽略。"""
+        """
+        战斗中鼠标点击：
+        - 红格（攻击目标）→ 使用当前选中技能攻击
+        - 蓝格（可移动）→ 移动
+        """
         assert self.player and self.floor and self.battle
         if not self.battle.is_player_turn:
             return
@@ -227,22 +299,55 @@ class PlayState(BaseState):
         gx = int(mouse_pos[0] / ts + cam_x)
         gy = int(mouse_pos[1] / ts + cam_y)
 
-        # 点击可攻击格子 → AttackAction
+        # 点击可攻击格子 → AttackAction/SkillAction
         if (gx, gy) in self._attack_targets:
             target = self._attack_targets[(gx, gy)]
-            action = AttackAction(self.player, target, ap_cost=2)
-            if self.battle.execute_action(action):
-                self._after_player_action()
+            skills = self.player.skills
+            if 0 <= self._selected_skill_index < len(skills):
+                skill = skills[self._selected_skill_index]
+                # Day 5 统一走 SkillAction（含基础攻击 1.0×）
+                action = SkillAction(
+                    actor=self.player,
+                    target=target,
+                    skill_id=skill.id,
+                    multiplier=skill.multiplier,
+                    ap_cost=skill.ap_cost,
+                    skill_name=skill.name,
+                )
+                if self.battle.execute_action(action):
+                    self._spawn_damage_floating_text()
+                    self._after_player_action()
             return
 
         # 点击可移动格子 → MoveAction
         if (gx, gy) in self._move_range and (gx, gy) != self.player.grid_pos:
-            # Day 4：移动消耗 1 AP/格（用 BFS 距离作为 AP 成本上限 1）
             action = MoveAction(self.player, Vector2(gx, gy), ap_cost=1)
             if self.battle.execute_action(action):
                 self._after_player_action()
             return
-        # 点击其他位置：忽略
+
+    def _spawn_damage_floating_text(self) -> None:
+        """根据 battle.last_damage_result 生成飘字。"""
+        assert self.battle
+        result = self.battle.last_damage_result
+        target = self.battle.last_damage_target
+        if result is None or target is None:
+            return
+        # 飘字文本：暴击加感叹号
+        text = f"-{result.damage}"
+        if result.is_crit:
+            text = f"-{result.damage}!"
+            color = (255, 220, 80)  # 暴击黄色
+        else:
+            color = (255, 80, 80)   # 普通红色
+        # 屏幕坐标：目标头顶
+        ts = config.TILE_SIZE
+        sx = (target.position.x - self.camera.x) * ts + ts // 4
+        sy = (target.position.y - self.camera.y) * ts - 4
+        self._floating_texts.append(FloatingText(text, sx, sy, color))
+        # 清除一次性标记，避免重复生成
+        self.battle.last_damage_result = None
+        self.battle.last_damage_target = None
 
     def _after_player_action(self) -> None:
         """玩家执行行动后：刷新高亮、迷雾、相机，检查战斗结束。"""
@@ -252,7 +357,6 @@ class PlayState(BaseState):
             self._end_battle(victory=True)
             return
         if self.battle.is_enemy_turn:
-            # 进入敌人回合，update() 会推进
             return
         # 仍在玩家回合：刷新高亮与迷雾
         self._compute_battle_highlights()
@@ -361,6 +465,10 @@ class PlayState(BaseState):
         # ---------- 第六层：玩家 ----------
         self.player.render(screen, cam_x, cam_y)
 
+        # ---------- 第七层：飘字 ----------
+        for ft in self._floating_texts:
+            ft.draw(screen, self.game.font)
+
         # ---------- HUD ----------
         self._draw_hud(screen)
 
@@ -460,7 +568,44 @@ class PlayState(BaseState):
         # 战斗模式提示
         if self.mode == PlayMode.BATTLE:
             tip = self.game.font.render(
-                "点击蓝格移动 · 点击红格攻击 · 空格结束回合",
+                "点击蓝格移动 · 点击红格攻击 · 空格结束回合 · M 切换移动/攻击",
                 True, config.COLOR_TEXT_HIGHLIGHT,
             )
             screen.blit(tip, (10, 10))
+            # Day 5：技能栏（顶部下方）
+            self._draw_skill_bar(screen)
+
+    def _draw_skill_bar(self, screen) -> None:
+        """绘制技能选择栏（数字键 1/2/3 切换）。"""
+        assert self.player
+        skills = self.player.skills
+        bar_y = 40
+        bar_x = 10
+        slot_w = 200
+        slot_h = 32
+        gap = 8
+        for i, skill in enumerate(skills):
+            rect = pygame.Rect(bar_x + i * (slot_w + gap), bar_y, slot_w, slot_h)
+            # 选中态高亮
+            is_selected = (i == self._selected_skill_index)
+            bg = (60, 80, 120) if is_selected else (30, 30, 40)
+            pygame.draw.rect(screen, bg, rect, border_radius=4)
+            border_color = config.COLOR_TEXT_HIGHLIGHT if is_selected else config.GRAY
+            pygame.draw.rect(screen, border_color, rect, 2, border_radius=4)
+            # 技能文本
+            txt = f"[{i+1}] {skill.name} {skill.ap_cost}AP {skill.multiplier}×"
+            text_surf = self.game.font.render(txt, True, config.COLOR_TEXT)
+            screen.blit(text_surf, (rect.x + 6, rect.y + 6))
+            # AP 不足时灰显
+            if self.player.stats.ap < skill.ap_cost:
+                overlay = pygame.Surface((slot_w, slot_h), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 140))
+                screen.blit(overlay, rect)
+        # 移动模式标记
+        if self._selected_skill_index < 0:
+            rect = pygame.Rect(bar_x + len(skills) * (slot_w + gap), bar_y, slot_w, slot_h)
+            pygame.draw.rect(screen, (60, 120, 80), rect, border_radius=4)
+            pygame.draw.rect(screen, config.COLOR_TEXT_HIGHLIGHT, rect, 2, border_radius=4)
+            txt = "[M] 移动模式"
+            text_surf = self.game.font.render(txt, True, config.COLOR_TEXT)
+            screen.blit(text_surf, (rect.x + 6, rect.y + 6))

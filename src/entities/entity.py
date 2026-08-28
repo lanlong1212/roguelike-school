@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pygame
 
+from src.combat.status_effect import StatusEffectContainer
 from src.core import config
 from src.entities.stats import Stats
 from src.utils.vector import Vector2
@@ -18,7 +19,7 @@ from src.utils.vector import Vector2
 class Entity:
     """实体基类。坐标用 Vector2（浮点），网格运算时取整。"""
 
-    __slots__ = ("position", "stats", "color", "name")
+    __slots__ = ("position", "stats", "color", "name", "status_effects")
 
     def __init__(
         self,
@@ -31,6 +32,8 @@ class Entity:
         self.stats: Stats = stats or Stats()
         self.color: tuple[int, int, int] = color
         self.name: str = name
+        # Day 5：状态效果容器
+        self.status_effects: StatusEffectContainer = StatusEffectContainer()
 
     # ========== 网格坐标访问 ==========
 

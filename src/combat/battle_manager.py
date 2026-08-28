@@ -52,6 +52,9 @@ class BattleManager:
 
         # 最近一次行动描述（供 HUD 显示反馈）
         self.last_action_desc: str = ""
+        # Day 5：最近一次伤害结果与目标（供 UI 生成飘字）
+        self.last_damage_result = None
+        self.last_damage_target = None
 
     # ========== 玩家行动接口 ==========
 
