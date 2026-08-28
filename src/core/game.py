@@ -64,8 +64,6 @@ class Game:
         if self._states:
             state = self._states.pop()
             state.exit()
-            if self._states:
-                self._states[-1].enter()
 
     def change_state(self, state):
         """替换栈顶状态，用于直接切换（如菜单→游戏→结算）。"""

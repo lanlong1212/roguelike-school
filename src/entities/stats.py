@@ -22,7 +22,8 @@ class Stats:
         "atk", "def_",
         "crit_rate",      # 暴击率，0.0~1.0
         "crit_damage",    # 暴击伤害倍率（1.5 = 150%）
-        "move_range",     # 每回合可移动格数
+        "move_range",     # 每回合可移动格数（默认 3 格）
+        "attack_range",   # 攻击范围格数（默认 1 格），
     )
 
     def __init__(
@@ -44,6 +45,7 @@ class Stats:
         self.crit_rate = crit_rate
         self.crit_damage = crit_damage
         self.move_range = move_range
+        self.attack_range = 1
 
     # ========== HP 操作 ==========
 

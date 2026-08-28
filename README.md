@@ -103,8 +103,3 @@ src/
 └── utils/           # 工具（向量、随机数）
 ```
 
-## 文档
-
-- [产品需求文档](docs/prds/labyrinth-chess-mvp-v1.0-prd.md)
-- [开发计划](docs/开发计划.md)
-- [调研报告](docs/调研报告.md)

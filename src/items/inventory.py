@@ -102,6 +102,7 @@ class Inventory:
         self.owner.stats.atk += mod.atk_bonus
         self.owner.stats.def_ += mod.def_bonus
         self.owner.stats.max_hp += mod.max_hp_bonus
+        self.owner.stats.attack_range += mod.attack_range_bonus
         # max_hp 变化时同步 hp
         if mod.max_hp_bonus > 0:
             self.owner.stats.hp += mod.max_hp_bonus

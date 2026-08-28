@@ -116,6 +116,8 @@ class PlayState(BaseState):
         self._kills: int = 0  # 击杀数
         self._counted_kills: set[int] = set()  # 已计入击杀的敌人 id
         self._last_loot_desc: str = ""
+        # Day 9：测试模式（T 键切换，开局送全套物品用于测试装备系统）
+        self._test_mode: bool = False
 
     # ========== 生命周期 ==========
 
@@ -163,6 +165,9 @@ class PlayState(BaseState):
                 elif event.key in (pygame.K_d, pygame.K_RIGHT): dx = 1
                 if dx != 0 or dy != 0:
                     self._try_explore_move(dx, dy)
+                # Day 9：T 键切换测试模式（送全套物品）
+                elif event.key == pygame.K_t:
+                    self._toggle_test_mode()
 
             elif self.mode == PlayMode.BATTLE:
                 # 空格/回车 → 结束回合
@@ -327,7 +332,8 @@ class PlayState(BaseState):
         if self._selected_skill_index >= len(skills):
             return
         skill = skills[self._selected_skill_index]
-        attack_range = skill.range_cells
+        bonus = (self.player.stats.attack_range - 1) if skill.id == "basic_attack" else 0
+        attack_range = skill.range_cells + bonus
 
         # BFS 从玩家位置出发，找攻击范围内所有敌人
         # 距离用切比雪夫距离（8 方向），range_cells=1 即相邻 8 格
@@ -731,3 +737,18 @@ class PlayState(BaseState):
                     FloatingText(f"+{healed}", sx, sy, (100, 255, 100))
                 )
             self._last_loot_desc = f"使用 {item.name}"
+
+    def _toggle_test_mode(self) -> None:
+        """Day 9：切换测试模式，送全套物品用于测试装备系统。"""
+        self._test_mode = not self._test_mode
+        if self._test_mode:
+            from src.items.weapon import create_iron_sword, create_long_bow
+            from src.items.potion import HealthPotion, StrengthPotion
+            self.player.inventory.add(create_iron_sword())
+            self.player.inventory.add(create_long_bow())
+            self.player.inventory.add(HealthPotion())
+            self.player.inventory.add(HealthPotion())
+            self.player.inventory.add(StrengthPotion())
+            self._last_loot_desc = "[测试模式] 已获得全套物品，按 I 打开背包"
+        else:
+            self._last_loot_desc = "[测试模式] 关闭"

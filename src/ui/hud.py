@@ -84,7 +84,7 @@ class HUD:
                 "1/2/3 技能 · M 移动 · H 药水 · 空格结束回合"
             )
         else:
-            self.tip_text.set_text("WASD 移动 · ESC 暂停 · I 背包")
+            self.tip_text.set_text("WASD 移动 · ESC 暂停 · I 背包 · T 测试模式")
 
     def draw(self, screen, font) -> None:
         """绘制 HUD。"""
