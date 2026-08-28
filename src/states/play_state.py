@@ -22,6 +22,8 @@ from src.core import config
 from src.entities.enemy import Enemy
 from src.entities.player import Player, Skill
 from src.states.base_state import BaseState
+from src.ui.hud import HUD
+from src.ui.menu import InventoryMenu
 from src.utils.vector import Vector2
 from src.world.floor import Floor
 from src.world.fog_of_war import FogState
@@ -108,6 +110,12 @@ class PlayState(BaseState):
         self._floating_texts: list[FloatingText] = []
         # 数字键 1/2/3 选技能；选中后点击红格释放；选中移动模式时点击蓝格移动
         self._selected_skill_index: int = 0  # 0=基础攻击（默认）
+        # Day 8：HUD + 背包界面 + 统计
+        self.hud: HUD = HUD()
+        self._inventory_menu: InventoryMenu | None = None
+        self._kills: int = 0  # 击杀数
+        self._counted_kills: set[int] = set()  # 已计入击杀的敌人 id
+        self._last_loot_desc: str = ""
 
     # ========== 生命周期 ==========
 
@@ -125,19 +133,35 @@ class PlayState(BaseState):
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
+            # ESC → Day 8：暂停（不再直接回主菜单）
             if event.key == pygame.K_ESCAPE:
-                from src.states.menu_state import MenuState
-                self.game.change_state(MenuState(self.game))
+                from src.states.pause_state import PauseState
+                self.game.push_state(PauseState(self.game, play_state=self))
+                return
+
+            # I 键 → 打开/关闭背包
+            if event.key == pygame.K_i:
+                if self._inventory_menu is None:
+                    self._inventory_menu = InventoryMenu(
+                        self.player.inventory,
+                        on_use_item=self._use_inventory_item,
+                    )
+                else:
+                    self._inventory_menu = None
+                return
+
+            # 背包打开时只响应 I/Esc
+            if self._inventory_menu is not None:
                 return
 
             if self.mode == PlayMode.EXPLORE:
-                # WASD 探索移动
+                # WASD/方向键 → 尝试移动
                 dx, dy = 0, 0
                 if event.key in (pygame.K_w, pygame.K_UP): dy = -1
                 elif event.key in (pygame.K_s, pygame.K_DOWN): dy = 1
                 elif event.key in (pygame.K_a, pygame.K_LEFT): dx = -1
                 elif event.key in (pygame.K_d, pygame.K_RIGHT): dx = 1
-                if dx or dy:
+                if dx != 0 or dy != 0:
                     self._try_explore_move(dx, dy)
 
             elif self.mode == PlayMode.BATTLE:
@@ -167,6 +191,10 @@ class PlayState(BaseState):
                     self._use_first_potion()
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # 背包打开时点击背包
+            if self._inventory_menu is not None:
+                self._inventory_menu.handle_click(event.pos)
+                return
             if self.mode == PlayMode.BATTLE:
                 self._handle_battle_click(event.pos)
 
@@ -182,6 +210,13 @@ class PlayState(BaseState):
                 # 敌人攻击后生成飘字（敌人攻击玩家时）
                 self._spawn_enemy_damage_floating_text()
                 self._after_enemy_turn()
+
+        # Day 8：更新 HUD
+        self.hud.update(
+            self.player, self.floor,
+            battle=self.battle, mode=self.mode,
+            loot_desc=self._last_loot_desc,
+        )
 
     # ========== 探索模式 ==========
 
@@ -385,9 +420,18 @@ class PlayState(BaseState):
     def _after_player_action(self) -> None:
         """玩家执行行动后：刷新高亮、迷雾、相机，检查战斗结束。"""
         assert self.player and self.floor and self.battle
+        # Day 8：更新击杀计数（敌人死亡时）
+        for enemy in self.battle.enemies:
+            if enemy.stats.is_dead() and id(enemy) not in self._counted_kills:
+                self._kills += 1
+                self._counted_kills.add(id(enemy))
         # 战斗结束
         if self.battle.phase == TurnPhase.BATTLE_WON:
+            is_boss = self._last_room and self._last_room.room_type == RoomType.BOSS
             self._end_battle(victory=True)
+            # Day 8：Boss 击败跳胜利结算
+            if is_boss:
+                self._goto_game_over(victory=True)
             return
         if self.battle.is_enemy_turn:
             return
@@ -401,8 +445,26 @@ class PlayState(BaseState):
         assert self.player and self.battle
         if self.battle.phase == TurnPhase.BATTLE_LOST:
             self._end_battle(victory=False)
+            # Day 8：玩家死亡跳转 GameOver
+            self._goto_game_over(victory=False)
             return
         self._compute_battle_highlights()
+
+    def _goto_game_over(self, victory: bool) -> None:
+        """Day 8：跳转到结算界面。"""
+        from src.states.game_over_state import GameOverState
+        # 统计击杀数与战利品
+        loot_names = []
+        for item in self.player.inventory.slots:
+            if item is not None:
+                loot_names.append(item.name)
+        stats = {
+            "kills": self._kills,
+            "floor": self.floor.level,
+            "time": "00:00",  # Day 9 加计时
+            "loot": loot_names,
+        }
+        self.game.change_state(GameOverState(self.game, victory=victory, stats=stats))
 
     def _end_battle(self, victory: bool) -> None:
         """结束战斗，切回探索模式。"""
@@ -536,8 +598,15 @@ class PlayState(BaseState):
         for ft in self._floating_texts:
             ft.draw(screen, self.game.font)
 
-        # ---------- HUD ----------
-        self._draw_hud(screen)
+        # ---------- 第八层：HUD ----------
+        self.hud.draw(screen, self.game.font)
+        # 战斗模式：技能栏
+        if self.mode == PlayMode.BATTLE:
+            self._draw_skill_bar(screen)
+        # 背包界面
+        if self._inventory_menu is not None:
+            self._inventory_menu.update(0)
+            self._inventory_menu.draw(screen, self.game.font)
 
     def _draw_battle_highlights(self, screen, cam_x, cam_y, ts) -> None:
         """绘制可移动（蓝）/可攻击（红）半透明高亮。"""
@@ -581,66 +650,6 @@ class PlayState(BaseState):
         surf.fill(color)
         self._fog_surfaces[key] = surf
         return surf
-
-    def _draw_hud(self, screen) -> None:
-        assert self.floor and self.player
-        # 半透明面板
-        bar = pygame.Surface((config.SCREEN_WIDTH, 40), pygame.SRCALPHA)
-        bar.fill(config.COLOR_PANEL)
-        screen.blit(bar, (0, config.SCREEN_HEIGHT - 40))
-
-        # 左侧：楼层 + 种子 + 模式
-        mode_str = "探索" if self.mode == PlayMode.EXPLORE else "战斗"
-        left_text = self.game.font.render(
-            f"F{self.floor.level}  ·  Seed:{self.floor.rng.seed}  ·  [{mode_str}]",
-            True, config.COLOR_TEXT,
-        )
-        screen.blit(left_text, (10, config.SCREEN_HEIGHT - 32))
-
-        # 中间：HP / AP / 回合
-        s = self.player.stats
-        if self.battle:
-            center_text = self.game.font.render(
-                f"HP {s.hp}/{s.max_hp}   AP {s.ap}/{s.max_ap}   Turn {self.battle.turn_count}",
-                True, config.COLOR_TEXT,
-            )
-        else:
-            center_text = self.game.font.render(
-                f"HP {s.hp}/{s.max_hp}   AP {s.ap}/{s.max_ap}",
-                True, config.COLOR_TEXT,
-            )
-        screen.blit(
-            center_text,
-            (config.SCREEN_WIDTH // 2 - center_text.get_width() // 2,
-             config.SCREEN_HEIGHT - 32),
-        )
-
-        # 右侧：玩家坐标 / 行动描述
-        if self.battle and self.battle.last_action_desc:
-            right_text = self.game.font.render(
-                self.battle.last_action_desc[:30],
-                True, config.COLOR_TEXT_HIGHLIGHT,
-            )
-        else:
-            right_text = self.game.font.render(
-                f"({self.player.grid_x},{self.player.grid_y})",
-                True, config.LIGHT_GRAY,
-            )
-        screen.blit(
-            right_text,
-            (config.SCREEN_WIDTH - right_text.get_width() - 10,
-             config.SCREEN_HEIGHT - 32),
-        )
-
-        # 战斗模式提示
-        if self.mode == PlayMode.BATTLE:
-            tip = self.game.font.render(
-                "点击蓝格移动 · 点击红格攻击 · 空格结束回合 · M 切换移动/攻击",
-                True, config.COLOR_TEXT_HIGHLIGHT,
-            )
-            screen.blit(tip, (10, 10))
-            # Day 5：技能栏（顶部下方）
-            self._draw_skill_bar(screen)
 
     def _draw_skill_bar(self, screen) -> None:
         """绘制技能选择栏（数字键 1/2/3 切换）。"""
@@ -701,3 +710,24 @@ class PlayState(BaseState):
                         self.battle.last_action_desc = f"使用 {name}"
                     self._compute_battle_highlights()
                 return
+
+    def _use_inventory_item(self, slot: int) -> None:
+        """Day 8：从背包界面使用物品。"""
+        inv = self.player.inventory
+        item = inv.get_item(slot)
+        if item is None:
+            return
+        hp_before = self.player.stats.hp
+        inv.use_item(slot, self.player)
+        # 如果是药水且回血了，生成治疗飘字
+        from src.items.item import ItemType
+        if item.item_type == ItemType.POTION:
+            healed = self.player.stats.hp - hp_before
+            if healed > 0:
+                ts = config.TILE_SIZE
+                sx = (self.player.position.x - self.camera.x) * ts + ts // 4
+                sy = (self.player.position.y - self.camera.y) * ts - 4
+                self._floating_texts.append(
+                    FloatingText(f"+{healed}", sx, sy, (100, 255, 100))
+                )
+            self._last_loot_desc = f"使用 {item.name}"

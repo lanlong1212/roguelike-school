@@ -76,6 +76,12 @@ class Game:
             self._states.append(state)
         state.enter()
 
+    def clear_states(self) -> None:
+        """Day 8：清空状态栈（返回主菜单用）。"""
+        for s in self._states:
+            s.exit()
+        self._states.clear()
+
     @property
     def current_state(self):
         """返回当前活跃状态（栈顶），无状态时返回 None。"""
