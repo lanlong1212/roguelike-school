@@ -9,6 +9,7 @@
 from enum import IntEnum
 
 from src.core import config
+from src.world.tilemap import TileType
 from src.utils.vector import Vector2
 
 
@@ -51,7 +52,7 @@ class FogOfWar:
 
     # ========== 视野更新 ==========
 
-    def update_visibility(self, player_pos: Vector2, radius: int = DEFAULT_RADIUS) -> None:
+    def update_visibility(self, player_pos: Vector2, radius: int = DEFAULT_RADIUS,tilemap = None) -> None:
         """
         以玩家为中心、radius 为半径刷新视野。
         原 VISIBLE 但走出视野的瓦片降级为 EXPLORED，保留探索记忆。
@@ -69,7 +70,38 @@ class FogOfWar:
         r2 = radius * radius
         for dy in range(-radius, radius + 1):
             for dx in range(-radius, radius + 1):
-                if dx * dx + dy * dy <= r2:
-                    gx, gy = cx + dx, cy + dy
-                    if self.in_bounds(gx, gy):
-                        self._grid[gy][gx] = FogState.VISIBLE
+                if dx*dx+dy*dy > r2:
+                    continue
+                gx,gy = cx +dx , cy +dy
+                if not self.in_bounds(gx,gy):
+                    continue
+                if abs(dx) + abs(dy) <= 1 or tilemap is None or self._has_line_of_sight(
+                    cx, cy, gx, gy, tilemap
+                ):
+                    self._grid[gy][gx] = FogState.VISIBLE
+
+        # ========== 射线检测 ==========
+
+    def _line_cells(self, x0: int, y0: int, x1: int, y1: int):
+        """
+        Bresenham 步进版：生成 (x0,y0)→(x1,y1) 路径上的格子坐标。
+        步数取 max(|dx|,|dy|)，每步按比例插值，贴合几何直线。
+        """
+        dx, dy = x1 - x0, y1 - y0
+        n = max(abs(dx), abs(dy))
+        if n == 0:
+            yield x0, y0
+            return
+        for i in range(n + 1):
+            yield x0 + round(dx * i / n), y0 + round(dy * i / n)
+
+    def _has_line_of_sight(
+        self, x0: int, y0: int, x1: int, y1: int, tilemap
+    ) -> bool:
+        """路径上（不含终点）遇墙 → 不可见。终点是墙也可见（能看到墙面）。"""
+        for gx, gy in self._line_cells(x0, y0, x1, y1):
+            if gx == x1 and gy == y1:
+                break
+            if tilemap.get_tile(gx, gy) == TileType.WALL:
+                return False
+        return True

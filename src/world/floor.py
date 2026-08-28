@@ -77,7 +77,7 @@ class Floor:
 
         # Step 4: 计算玩家出生点（REST/SHOP/START 房间中心）+ 初始迷雾
         self.player_spawn = self._pick_spawn()
-        self.fog.update_visibility(self.player_spawn)
+        self.fog.update_visibility(self.player_spawn, tilemap=self.tilemap)
 
     def _assign_room_types(self) -> None:
         """
