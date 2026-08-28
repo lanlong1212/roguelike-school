@@ -88,6 +88,20 @@ class BattleManager:
 
         return True
 
+    # ========== 敌人行动接口（Day 6） ==========
+
+    def execute_enemy_action(self, actor: Entity, action: Action) -> bool:
+        """
+        敌人执行行动。绕过玩家回合检查，用敌人自己的 AP。
+        """
+        if self.phase != TurnPhase.ENEMY_TURN:
+            return False
+        if actor.stats.ap < action.ap_cost:
+            return False
+        actor.stats.spend_ap(action.ap_cost)
+        action.execute(self)
+        return True
+
     def end_player_turn(self) -> None:
         """玩家主动结束回合。"""
         if self.phase == TurnPhase.PLAYER_TURN:
@@ -105,12 +119,33 @@ class BattleManager:
 
     def step_enemy_turn(self) -> None:
         """
-        推进敌人回合一个"tick"。
-        Day 4：空实现，直接切回玩家回合。
-        Day 6：调用当前敌人的 AI.tick()，AI 返回行动则执行，
-              当前敌人 AP 归零后轮到下一个敌人，全部动完切回玩家回合。
+        推进敌人回合一个"tick"：让当前敌人执行一次 AI tick。
+        敌人 AP 归零或行为树返回 FAILURE 后轮到下一个敌人，
+        全部敌人行动完毕则切回玩家回合。
         """
-        # Day 4 占位：立即结束敌人回合
+        # 过滤掉已死亡的敌人
+        while self.current_enemy_index < len(self.enemies):
+            enemy = self.enemies[self.current_enemy_index]
+            if enemy.stats.is_dead():
+                self.current_enemy_index += 1
+                continue
+            # AP 不足（< 1）或无行为树 → 轮到下一个
+            if enemy.stats.ap < 1 or enemy.behavior_tree is None:
+                self.current_enemy_index += 1
+                continue
+            # 执行一次 AI tick
+            status = enemy.take_ai_turn(self)
+            # 检查玩家是否死亡
+            if self.is_player_dead():
+                self.phase = TurnPhase.BATTLE_LOST
+                return
+            # status 为 None 或 FAILURE → 轮到下一个敌人
+            if status is None or status.name == "FAILURE" or enemy.stats.ap < 1:
+                self.current_enemy_index += 1
+                continue
+            # 本次 tick 成功消耗 AP，下一帧再继续此敌人
+            return
+        # 所有敌人行动完毕
         self._start_player_turn()
 
     def _start_player_turn(self) -> None:

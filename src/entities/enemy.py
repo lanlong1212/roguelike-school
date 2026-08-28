@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.ai.nodes import NodeStatus  # noqa: E402 (避免循环导入由 TYPE_CHECKING 保护)
 from src.core import config
 from src.entities.entity import Entity
 from src.entities.stats import Stats
@@ -54,14 +55,14 @@ class Enemy(Entity):
         """注入行为树。Day 6 调用。"""
         self.behavior_tree = tree
 
-    def take_ai_turn(self, manager) -> None:
+    def take_ai_turn(self, manager) -> "NodeStatus | None":
         """
-        敌人执行一回合 AI 行动。
-        Day 4：空实现（BattleManager.step_enemy_turn 直接切回合）。
-        Day 6：调用 behavior_tree.tick()。
+        敌人执行一次 AI tick。
+        Day 6：调用 behavior_tree.tick()，返回节点状态。
         """
         if self.behavior_tree is not None:
-            self.behavior_tree.tick(self, manager)
+            return self.behavior_tree.tick(self, manager)
+        return None
 
     # ========== 渲染 ==========
 

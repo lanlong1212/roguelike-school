@@ -175,7 +175,8 @@ class PlayState(BaseState):
         if self.mode == PlayMode.BATTLE and self.battle:
             if self.battle.is_enemy_turn:
                 self.battle.step_enemy_turn()
-                # step_enemy_turn Day 4 直接切回玩家回合
+                # 敌人攻击后生成飘字（敌人攻击玩家时）
+                self._spawn_enemy_damage_floating_text()
                 self._after_enemy_turn()
 
     # ========== 探索模式 ==========
@@ -207,10 +208,12 @@ class PlayState(BaseState):
     def _start_battle(self, room: Room) -> None:
         """触发一场战斗：生成敌人 + 创建 BattleManager + 计算高亮。"""
         assert self.player and self.floor
-        # Day 4：根据房间类型生成 1-2 个占位敌人，放在房间角落
+        # Day 6：根据房间类型生成 Slime/Skeleton，放在房间角落
+        from src.entities.enemies.slime import Slime
+        from src.entities.enemies.skeleton import Skeleton
+
         enemies: list[Enemy] = []
-        num = 2 if room.room_type == RoomType.BATTLE else 1  # Boss 房只放 1 个（Day 7 换成 Boss）
-        # 候选位置：房间四角往内 1 格
+        num = 2 if room.room_type == RoomType.BATTLE else 1
         corners = [
             (room.x1 + 1, room.y1 + 1),
             (room.x2 - 1, room.y1 + 1),
@@ -219,10 +222,13 @@ class PlayState(BaseState):
         ]
         for i in range(num):
             gx, gy = corners[i % len(corners)]
-            # 避免和玩家重合
             if (gx, gy) == self.player.grid_pos:
                 continue
-            enemy = Enemy(position=Vector2(gx, gy), name=f"Enemy_{i+1}")
+            # Day 6：第一个敌人用 Slime，第二个用 Skeleton
+            if i == 0:
+                enemy = Slime(position=Vector2(gx, gy))
+            else:
+                enemy = Skeleton(position=Vector2(gx, gy))
             enemies.append(enemy)
 
         self.battle = BattleManager(self.player, enemies, self.floor.tilemap)
@@ -346,6 +352,22 @@ class PlayState(BaseState):
         sy = (target.position.y - self.camera.y) * ts - 4
         self._floating_texts.append(FloatingText(text, sx, sy, color))
         # 清除一次性标记，避免重复生成
+        self.battle.last_damage_result = None
+        self.battle.last_damage_target = None
+
+    def _spawn_enemy_damage_floating_text(self) -> None:
+        """敌人攻击玩家时生成飘字（飘在玩家头顶）。"""
+        assert self.battle
+        result = self.battle.last_damage_result
+        target = self.battle.last_damage_target
+        if result is None or target is None:
+            return
+        text = f"-{result.damage}"
+        color = (255, 100, 100)
+        ts = config.TILE_SIZE
+        sx = (target.position.x - self.camera.x) * ts + ts // 4
+        sy = (target.position.y - self.camera.y) * ts - 4
+        self._floating_texts.append(FloatingText(text, sx, sy, color))
         self.battle.last_damage_result = None
         self.battle.last_damage_target = None
 
