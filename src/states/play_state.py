@@ -655,7 +655,7 @@ class PlayState(BaseState):
         """绘制技能选择栏（数字键 1/2/3 切换）。"""
         assert self.player
         skills = self.player.skills
-        bar_y = 40
+        bar_y = 88  # Day 8：避开 HUD 的 HP/AP 条（8~76 像素）
         bar_x = 10
         slot_w = 200
         slot_h = 32
