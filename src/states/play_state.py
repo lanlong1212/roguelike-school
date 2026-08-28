@@ -307,6 +307,7 @@ class PlayState(BaseState):
         self._attack_targets.clear()
         self._counted_kills.clear()
         self._cleared_room_positions.clear()  # 新楼层的房间状态重新记录
+        self._battles_triggered.clear()  
         self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
         self._update_camera()
         self._update_current_room()
