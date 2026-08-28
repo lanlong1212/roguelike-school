@@ -83,8 +83,10 @@ class GameOverState(BaseState):
         pass
 
     def _restart(self) -> None:
-        """回到主菜单开始新游戏。"""
+        """回到主菜单开始新游戏。结算即本局结束，清除存档。"""
+        from src.core import save_manager
         from src.states.menu_state import MenuState
+        save_manager.clear_save()
         self.game.clear_states()
         self.game.push_state(MenuState(self.game))
 

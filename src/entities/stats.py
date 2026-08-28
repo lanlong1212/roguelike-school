@@ -97,6 +97,7 @@ class Stats:
         s.crit_rate = self.crit_rate
         s.crit_damage = self.crit_damage
         s.move_range = self.move_range
+        s.attack_range = self.attack_range
         return s
 
     def __repr__(self) -> str:

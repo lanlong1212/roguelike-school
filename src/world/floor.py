@@ -53,6 +53,9 @@ class Floor:
         # 关键位置
         self.player_spawn: Vector2 = Vector2()  # 玩家出生点
         self.boss_room: Room | None = None      # Boss 房引用
+        # 下行阶梯位置（Boss 房中心）。击败 Boss 前不可用，击败后 stair_active 置 True
+        self.stair_pos: Vector2 | None = None
+        self.stair_active: bool = False
 
         # 立即生成楼层
         self.generate_floor()
@@ -78,6 +81,18 @@ class Floor:
         # Step 4: 计算玩家出生点（REST/SHOP/START 房间中心）+ 初始迷雾
         self.player_spawn = self._pick_spawn()
         self.fog.update_visibility(self.player_spawn, tilemap=self.tilemap)
+
+        # Step 5: 下行阶梯固定在 Boss 房中心（击败 Boss 前不渲染/不激活）
+        if self.boss_room is not None:
+            stair_pos = self.boss_room.center()
+            self.stair_pos = Vector2(int(stair_pos.x), int(stair_pos.y))
+        else:
+            self.stair_pos = None
+
+    @property
+    def seed(self) -> int | None:
+        """返回本楼层实际使用的种子（未指定时由 RNG 自动生成），用于存档复现。"""
+        return self.rng.seed
 
     def _assign_room_types(self) -> None:
         """

@@ -19,6 +19,7 @@ import pygame
 from src.combat.action import AttackAction, EndTurnAction, MoveAction, SkillAction
 from src.combat.battle_manager import BattleManager, TurnPhase
 from src.core import config
+from src.core import save_manager
 from src.entities.enemy import Enemy
 from src.entities.player import Player, Skill
 from src.states.base_state import BaseState
@@ -37,6 +38,7 @@ _TILE_COLORS: dict[TileType, tuple[int, int, int]] = {
     TileType.FLOOR: config.COLOR_FLOOR,
     TileType.DOOR: config.COLOR_DOOR,
     TileType.TRAP: (180, 40, 40),
+    TileType.STAIR: config.COLOR_STAIR,
 }
 
 _ROOM_TYPE_LABEL: dict[RoomType, tuple[str, tuple[int, int, int]]] = {
@@ -89,12 +91,14 @@ class PlayMode(Enum):
 class PlayState(BaseState):
     """游戏中状态。Day 4：探索 + 战斗双模式。"""
 
-    def __init__(self, game):
+    def __init__(self, game, load_data: dict | None = None):
         super().__init__(game)
         self.floor: Floor | None = None
         self.player: Player | None = None
         self.camera = Vector2(0, 0)
         self._fog_surfaces: dict[int, pygame.Surface] = {}
+        # 用于从存档恢复的临时数据（enter() 时消费）
+        self._load_data: dict | None = load_data
 
         # 模式与战斗
         self.mode: PlayMode = PlayMode.EXPLORE
@@ -105,6 +109,7 @@ class PlayState(BaseState):
         # 玩家当前所在房间（用于触发战斗）
         self._current_room: Room | None = None
         self._battles_triggered: set[int] = set()  # 已触发战斗的房间 id
+        self._cleared_room_positions: set[tuple[int, int]] = set()  # 已清空房间中心（存档用）
         self._last_room: Room | None = None  # Day 7：记录战斗房间用于掉落
         # Day 5：飘字列表与技能 UI 状态
         self._floating_texts: list[FloatingText] = []
@@ -122,14 +127,51 @@ class PlayState(BaseState):
     # ========== 生命周期 ==========
 
     def enter(self):
-        self.floor = Floor(level=1)
-        self.player = Player(position=self.floor.player_spawn)
-        self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
+        # 从存档恢复（菜单"继续游戏"）
+        if self._load_data is not None:
+            self._restore_from_save_data(self._load_data)
+        else:
+            self.floor = Floor(level=1)
+            self.player = Player(position=self.floor.player_spawn)
+            self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
+        self._load_data = None  # 消费后清空
         self._update_camera()
         self._update_current_room()
 
+    def _restore_from_save_data(self, data: dict) -> None:
+        """根据存档数据重建楼层与玩家（属性/背包/装备/位置/击杀数）。"""
+        level = data.get("level", 1)
+        self.floor = Floor(level=level, seed=data.get("floor_seed"))
+        self.player = Player()  # 先用默认属性创建，apply_save_to_player 覆盖
+        save_manager.apply_save_to_player(self.player, data)
+        px, py = data["player"]["x"], data["player"]["y"]
+        self.player.move_to(px, py)
+        self._kills = data.get("kills", 0)
+        # 恢复已清空房间（避免读档后重复刷怪）
+        self._cleared_room_positions = {
+            (c[0], c[1]) for c in data.get("cleared_rooms", [])
+        }
+        # 记录击杀计数集合清空（新会话内不追踪历史敌人 id）
+        self._counted_kills.clear()
+        self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
+
     def exit(self):
-        pass
+        # 离开 PlayState（如暂停、切结算）时自动存档，形成检查点
+        if self.player is not None and self.floor is not None:
+            self._autosave()
+
+    def _autosave(self) -> None:
+        """把当前进度写入存档。"""
+        if self.player is None or self.floor is None:
+            return
+        save_manager.save_game(
+            self.player,
+            level=self.floor.level,
+            floor_seed=self.floor.seed,
+            pos=self.player.position,
+            kills=self._kills,
+            cleared_rooms=self._cleared_room_positions,
+        )
 
     # ========== 输入 ==========
 
@@ -227,10 +269,52 @@ class PlayState(BaseState):
 
     def _try_explore_move(self, dx: int, dy: int) -> None:
         assert self.player and self.floor
+        old_pos = self.player.grid_pos
         if self.player.try_move_explore(dx, dy, self.floor.tilemap):
             self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
             self._update_camera()
             self._update_current_room()
+            # 站在激活的阶梯上 → 下楼层
+            if self._is_on_stair() and old_pos != self.player.grid_pos:
+                self._descend_floor()
+
+    def _is_on_stair(self) -> bool:
+        """玩家是否站在已激活的阶梯上。"""
+        if (
+            self.floor is None
+            or self.player is None
+            or self.floor.stair_pos is None
+            or not self.floor.stair_active
+        ):
+            return False
+        return self.player.grid_pos == (
+            int(self.floor.stair_pos.x),
+            int(self.floor.stair_pos.y),
+        )
+
+    def _descend_floor(self) -> None:
+        """进入下一层：重建楼层，保留等级/属性/背包/击杀数，更新迷雾。"""
+        assert self.player and self.floor
+        self.floor = Floor(level=self.floor.level + 1)
+        self.player.move_to(
+            int(self.floor.player_spawn.x),
+            int(self.floor.player_spawn.y),
+        )
+        self.player.stats.reset_ap()
+        self.mode = PlayMode.EXPLORE
+        self.battle = None
+        self._move_range.clear()
+        self._attack_targets.clear()
+        self._counted_kills.clear()
+        self._cleared_room_positions.clear()  # 新楼层的房间状态重新记录
+        self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
+        self._update_camera()
+        self._update_current_room()
+        self._last_loot_desc = (
+            f"进入第 {self.floor.level} 层，难度提升 {(self.floor.level - 1) * 20}%"
+        )
+        # 下楼层后立即存档
+        self._autosave()
 
     def _update_current_room(self) -> None:
         """更新玩家当前所在房间，进入战斗房则触发战斗。"""
@@ -239,9 +323,13 @@ class PlayState(BaseState):
         for room in self.floor.rooms:
             if room.contains(gx, gy):
                 self._current_room = room
-                # 进入战斗房且未触发过 → 开战
+                # 进入战斗房且未触发过 → 开战（已清空房间见 _cleared_room_positions，不重复触发）
                 if room.room_type in (RoomType.BATTLE, RoomType.BOSS):
-                    if id(room) not in self._battles_triggered:
+                    center = room.center()
+                    if (
+                        id(room) not in self._battles_triggered
+                        and (int(center.x), int(center.y)) not in self._cleared_room_positions
+                    ):
                         self._battles_triggered.add(id(room))
                         self._start_battle(room)
                 return
@@ -257,12 +345,21 @@ class PlayState(BaseState):
         from src.entities.enemies.skeleton import Skeleton
         from src.entities.enemies.boss import Boss
 
+        # 多楼层难度缩放：每层敌人 HP/ATK ×(1 + (level-1)*0.2)
+        scale = 1.0 + (self.floor.level - 1) * 0.2
+
+        def _scaled(enemy: Enemy) -> Enemy:
+            enemy.stats.max_hp = int(enemy.stats.max_hp * scale)
+            enemy.stats.hp = enemy.stats.max_hp
+            enemy.stats.atk = int(enemy.stats.atk * scale)
+            return enemy
+
         enemies: list[Enemy] = []
         if room.room_type == RoomType.BOSS:
             # Boss 房只放 Boss
             bc = room.center()
             boss = Boss(position=Vector2(int(bc.x), int(bc.y)))
-            enemies.append(boss)
+            enemies.append(_scaled(boss))
         else:
             num = 2 if room.room_type == RoomType.BATTLE else 1
             corners = [
@@ -279,7 +376,7 @@ class PlayState(BaseState):
                     enemy = Slime(position=Vector2(gx, gy))
                 else:
                     enemy = Skeleton(position=Vector2(gx, gy))
-                enemies.append(enemy)
+                enemies.append(_scaled(enemy))
 
         self.battle = BattleManager(self.player, enemies, self.floor.tilemap)
         self.mode = PlayMode.BATTLE
@@ -434,10 +531,25 @@ class PlayState(BaseState):
         # 战斗结束
         if self.battle.phase == TurnPhase.BATTLE_WON:
             is_boss = self._last_room and self._last_room.room_type == RoomType.BOSS
+            # 记录已清空房间（存档用），读档后不重复刷怪
+            if self._last_room is not None:
+                center = self._last_room.center()
+                self._cleared_room_positions.add((int(center.x), int(center.y)))
             self._end_battle(victory=True)
-            # Day 8：Boss 击败跳胜利结算
+            # 击败 Boss：激活下行阶梯（Boss 房中心）
             if is_boss:
-                self._goto_game_over(victory=True)
+                self.floor.stair_active = True
+                # 把 Boss 房中心瓦片改为阶梯，便于渲染与踩踏检测
+                if self.floor.stair_pos is not None:
+                    self.floor.tilemap.set_tile(
+                        int(self.floor.stair_pos.x),
+                        int(self.floor.stair_pos.y),
+                        TileType.STAIR,
+                    )
+                self._last_loot_desc += " | 阶梯已开启，前往 Boss 房中心下楼"
+                # 到达最高层 → 通关结算；否则留在本层找楼梯
+                if self.floor.level >= config.MAX_FLOOR_LEVEL:
+                    self._goto_game_over(victory=True)
             return
         if self.battle.is_enemy_turn:
             return
@@ -457,7 +569,7 @@ class PlayState(BaseState):
         self._compute_battle_highlights()
 
     def _goto_game_over(self, victory: bool) -> None:
-        """Day 8：跳转到结算界面。"""
+        """Day 8：跳转到结算界面。本局结束，清除存档避免死局被恢复。"""
         from src.states.game_over_state import GameOverState
         # 统计击杀数与战利品
         loot_names = []
@@ -471,6 +583,8 @@ class PlayState(BaseState):
             "loot": loot_names,
         }
         self.game.change_state(GameOverState(self.game, victory=victory, stats=stats))
+        # change_state 会触发本状态 exit() 的自动存档重写，故在切换完成后清档
+        save_manager.clear_save()
 
     def _end_battle(self, victory: bool) -> None:
         """结束战斗，切回探索模式。"""

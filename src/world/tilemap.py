@@ -18,6 +18,7 @@ class TileType(IntEnum):
     FLOOR = 1   # 地面：可行走（房间内部/走廊）
     DOOR = 2    # 房门：可行走，特殊视觉
     TRAP = 3    # 陷阱：可行走，踩上触发伤害（后续扩展）
+    STAIR = 4   # 下行阶梯：可行走，踩上进入下一层
 
 
 class TileMap:
@@ -77,7 +78,7 @@ class TileMap:
     def is_walkable(self, gx: int, gy: int) -> bool:
         """瓦片可否行走。越界与墙返回 False。"""
         t = self.get_tile(gx, gy)
-        return t in (TileType.FLOOR, TileType.DOOR, TileType.TRAP)
+        return t in (TileType.FLOOR, TileType.DOOR, TileType.TRAP, TileType.STAIR)
 
     # ========== 遍历 ==========
 

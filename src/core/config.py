@@ -18,6 +18,7 @@ TITLE = "迷城棋局 Labyrinth Chess"  # 窗口标题
 TILE_SIZE = 32               # 单个瓦片边长（像素）
 ROOM_MAX_SIZE = 12           # 单个房间最大边长（瓦片数）
 MAP_MAX_SIZE = 40            # 单层地图最大边长（瓦片数）
+MAX_FLOOR_LEVEL = 3          # 游戏最大楼层数（达到后击败 Boss 即通关）
 
 # ========== 战斗数值 ==========
 AP_MAX = 5                   # 每回合行动点上限
@@ -34,6 +35,7 @@ LIGHT_GRAY = (200, 200, 200)
 COLOR_WALL = (30, 30, 40)    # 墙壁
 COLOR_FLOOR = (70, 60, 80)   # 地面
 COLOR_DOOR = (120, 90, 50)   # 房门
+COLOR_STAIR = (255, 235, 120)  # 下行阶梯
 
 # ========== 实体颜色 ==========
 COLOR_PLAYER = (80, 180, 255)   # 玩家
