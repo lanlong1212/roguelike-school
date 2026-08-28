@@ -103,6 +103,7 @@ class PlayState(BaseState):
         # 玩家当前所在房间（用于触发战斗）
         self._current_room: Room | None = None
         self._battles_triggered: set[int] = set()  # 已触发战斗的房间 id
+        self._last_room: Room | None = None  # Day 7：记录战斗房间用于掉落
         # Day 5：飘字列表与技能 UI 状态
         self._floating_texts: list[FloatingText] = []
         # 数字键 1/2/3 选技能；选中后点击红格释放；选中移动模式时点击蓝格移动
@@ -161,6 +162,9 @@ class PlayState(BaseState):
                 elif event.key == pygame.K_m:
                     self._selected_skill_index = -1  # -1 = 移动模式
                     self._compute_battle_highlights()
+                # H 键使用药水（找第一个药水槽位）
+                elif event.key == pygame.K_h:
+                    self._use_first_potion()
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.mode == PlayMode.BATTLE:
@@ -208,33 +212,40 @@ class PlayState(BaseState):
     def _start_battle(self, room: Room) -> None:
         """触发一场战斗：生成敌人 + 创建 BattleManager + 计算高亮。"""
         assert self.player and self.floor
-        # Day 6：根据房间类型生成 Slime/Skeleton，放在房间角落
+        # Day 7：Boss 房生成 Boss；战斗房生成 Slime/Skeleton
         from src.entities.enemies.slime import Slime
         from src.entities.enemies.skeleton import Skeleton
+        from src.entities.enemies.boss import Boss
 
         enemies: list[Enemy] = []
-        num = 2 if room.room_type == RoomType.BATTLE else 1
-        corners = [
-            (room.x1 + 1, room.y1 + 1),
-            (room.x2 - 1, room.y1 + 1),
-            (room.x1 + 1, room.y2 - 1),
-            (room.x2 - 1, room.y2 - 1),
-        ]
-        for i in range(num):
-            gx, gy = corners[i % len(corners)]
-            if (gx, gy) == self.player.grid_pos:
-                continue
-            # Day 6：第一个敌人用 Slime，第二个用 Skeleton
-            if i == 0:
-                enemy = Slime(position=Vector2(gx, gy))
-            else:
-                enemy = Skeleton(position=Vector2(gx, gy))
-            enemies.append(enemy)
+        if room.room_type == RoomType.BOSS:
+            # Boss 房只放 Boss
+            bc = room.center()
+            boss = Boss(position=Vector2(int(bc.x), int(bc.y)))
+            enemies.append(boss)
+        else:
+            num = 2 if room.room_type == RoomType.BATTLE else 1
+            corners = [
+                (room.x1 + 1, room.y1 + 1),
+                (room.x2 - 1, room.y1 + 1),
+                (room.x1 + 1, room.y2 - 1),
+                (room.x2 - 1, room.y2 - 1),
+            ]
+            for i in range(num):
+                gx, gy = corners[i % len(corners)]
+                if (gx, gy) == self.player.grid_pos:
+                    continue
+                if i == 0:
+                    enemy = Slime(position=Vector2(gx, gy))
+                else:
+                    enemy = Skeleton(position=Vector2(gx, gy))
+                enemies.append(enemy)
 
         self.battle = BattleManager(self.player, enemies, self.floor.tilemap)
         self.mode = PlayMode.BATTLE
         self.player.stats.reset_ap()
         self.battle.last_action_desc = f"遭遇 {len(enemies)} 个敌人！"
+        self._last_room = room  # Day 7：记录当前房间用于掉落
         self._compute_battle_highlights()
 
     def _compute_battle_highlights(self) -> None:
@@ -395,14 +406,48 @@ class PlayState(BaseState):
 
     def _end_battle(self, victory: bool) -> None:
         """结束战斗，切回探索模式。"""
+        # Day 7：先处理掉落（battle 仍可用）
+        loot_desc = ""
+        if victory and self._last_room:
+            if self._last_room.room_type == RoomType.BOSS:
+                loot_desc = self._drop_boss_loot()
+            elif self._last_room.room_type == RoomType.BATTLE:
+                loot_desc = self._drop_battle_loot()
+        # 清理战斗状态
         self.mode = PlayMode.EXPLORE
         self.battle = None
         self._move_range.clear()
         self._attack_targets.clear()
+        # 保留掉落信息用于 HUD 显示
+        self._last_loot_desc = loot_desc
         # 失败 → Day 8 接入 game_over_state；Day 4 暂时回主菜单
         if not victory:
             from src.states.menu_state import MenuState
             self.game.change_state(MenuState(self.game))
+
+    def _drop_boss_loot(self) -> str:
+        """Boss 掉落：长弓 + 治疗药水 ×2。返回掉落描述。"""
+        from src.items.weapon import create_long_bow
+        from src.items.potion import HealthPotion
+        loot = [create_long_bow(), HealthPotion(), HealthPotion()]
+        for item in loot:
+            self.player.inventory.add(item)
+        return f"获得战利品：{', '.join(i.name for i in loot)}"
+
+    def _drop_battle_loot(self) -> str:
+        """普通战斗掉落：50% 药水，30% 铁剑。返回掉落描述。"""
+        import random
+        from src.items.potion import HealthPotion
+        from src.items.weapon import create_iron_sword
+        roll = random.random()
+        if roll < 0.5:
+            self.player.inventory.add(HealthPotion())
+            return "获得：治疗药水"
+        elif roll < 0.8:
+            self.player.inventory.add(create_iron_sword())
+            return "获得：铁剑"
+        else:
+            return "战斗胜利！"
 
     # ========== 相机 ==========
 
@@ -631,3 +676,28 @@ class PlayState(BaseState):
             txt = "[M] 移动模式"
             text_surf = self.game.font.render(txt, True, config.COLOR_TEXT)
             screen.blit(text_surf, (rect.x + 6, rect.y + 6))
+
+    def _use_first_potion(self) -> None:
+        """Day 7：使用背包里第一个药水（H 键）。"""
+        from src.items.item import ItemType
+        inv = self.player.inventory
+        for i in range(inv.MAX_SLOTS):
+            item = inv.get_item(i)
+            if item is not None and item.item_type == ItemType.POTION:
+                hp_before = self.player.stats.hp
+                if inv.use_item(i, self.player):
+                    healed = self.player.stats.hp - hp_before
+                    name = item.name
+                    if healed > 0:
+                        self.battle.last_action_desc = f"使用 {name}，回复 {healed} HP"
+                        # 生成绿色治疗飘字
+                        ts = config.TILE_SIZE
+                        sx = (self.player.position.x - self.camera.x) * ts + ts // 4
+                        sy = (self.player.position.y - self.camera.y) * ts - 4
+                        self._floating_texts.append(
+                            FloatingText(f"+{healed}", sx, sy, (100, 255, 100))
+                        )
+                    else:
+                        self.battle.last_action_desc = f"使用 {name}"
+                    self._compute_battle_highlights()
+                return

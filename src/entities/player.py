@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from src.core import config
 from src.entities.entity import Entity
 from src.entities.stats import Stats
+from src.items.inventory import Inventory
 from src.utils.vector import Vector2
 from src.world.tilemap import TileMap
 
@@ -83,6 +84,8 @@ class Player(Entity):
         self.skills: list[Skill] = [Skill(**s.__dict__) for s in _DEFAULT_SKILLS]
         # 当前选中的技能（None=未选中，使用基础攻击）
         self.selected_skill: Skill | None = None
+        # Day 7：背包系统
+        self.inventory: Inventory = Inventory(self)
 
     # ========== 技能接口 ==========
 
