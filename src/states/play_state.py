@@ -699,6 +699,9 @@ class PlayState(BaseState):
             center = room.center()
             if fog.get_state(int(center.x), int(center.y)) == FogState.UNSEEN:
                 continue
+            # Boss 房击败后（阶梯已激活）不再显示"王"标签，避免与楼梯重叠
+            if room.room_type == RoomType.BOSS and self.floor.stair_active:
+                continue
             label, color = _ROOM_TYPE_LABEL.get(room.room_type, ("?", config.WHITE))
             sx = int((center.x - cam_x) * ts + ts // 2)
             sy = int((center.y - cam_y) * ts + ts // 2)
