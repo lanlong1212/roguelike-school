@@ -91,12 +91,17 @@ class Entity:
 
     # ========== 平滑移动插值 ==========
 
-    def update_visual(self, dt: float) -> None:
-        """推进视觉坐标插值（ease-out cubic），每帧由状态层调用。"""
+    def update_visual(self, dt: float, linear: bool = False) -> None:
+        """
+        推进视觉坐标插值，每帧由状态层调用。
+
+        linear=True 匀速滑动（长按连续行走，避免每格重复加减速产生顿挫）；
+        linear=False ease-out cubic（单格移动/停止收尾，起步停步更自然）。
+        """
         if self._move_t >= 1.0:
             return
         self._move_t = min(1.0, self._move_t + dt / max(0.01, self.move_duration))
-        t = 1.0 - (1.0 - self._move_t) ** 3
+        t = self._move_t if linear else 1.0 - (1.0 - self._move_t) ** 3
         self.visual_pos.x = self._move_from.x + (self.position.x - self._move_from.x) * t
         self.visual_pos.y = self._move_from.y + (self.position.y - self._move_from.y) * t
 

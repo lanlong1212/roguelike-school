@@ -207,7 +207,8 @@ class Player(Entity):
         from src.entities.animation import Animator
 
         anim = Animator()
-        for state, fps in (("idle", 5), ("walk", 10), ("attack", 14)):
+        # walk 15fps：长按行走每格 0.15s（约 2.25 帧/格），脚步节奏与移动频率匹配
+        for state, fps in (("idle", 5), ("walk", 15), ("attack", 14)):
             for d in ("down", "up", "left", "right"):
                 anim.add(
                     f"{state}_{d}",

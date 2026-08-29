@@ -126,6 +126,8 @@ class PlayState(BaseState):
         # 动画：死亡演出中的尸体（死亡动画播完后移除）、探索静止计时
         self._dying: list[Enemy] = []
         self._idle_timer: float = 99.0
+        # 探索长按连续行走：移动冷却（按住方向键每格间隔，衔接滑步动画）
+        self._move_cooldown: float = 0.0
         self._last_loot_desc: str = ""
         # Day 9：测试模式（T 键切换，开局送全套物品用于测试装备系统）
         self._test_mode: bool = False
@@ -221,16 +223,9 @@ class PlayState(BaseState):
                 return
 
             if self.mode == PlayMode.EXPLORE:
-                # WASD/方向键 → 尝试移动
-                dx, dy = 0, 0
-                if event.key in (pygame.K_w, pygame.K_UP): dy = -1
-                elif event.key in (pygame.K_s, pygame.K_DOWN): dy = 1
-                elif event.key in (pygame.K_a, pygame.K_LEFT): dx = -1
-                elif event.key in (pygame.K_d, pygame.K_RIGHT): dx = 1
-                if dx != 0 or dy != 0:
-                    self._try_explore_move(dx, dy)
+                # 移动由 update() 轮询按键处理（支持长按连续行走）
                 # Day 9：T 键切换测试模式（送全套物品）
-                elif event.key == pygame.K_t:
+                if event.key == pygame.K_t:
                     self._toggle_test_mode()
 
             elif self.mode == PlayMode.BATTLE:
@@ -283,7 +278,9 @@ class PlayState(BaseState):
 
         # 实体动画推进（玩家 / 战斗敌人 / 死亡演出）
         if self.player is not None:
-            self.player.update_visual(dt)  # 平滑移动插值
+            # 长按方向键期间匀速滑动（避免每格重复加减速导致顿挫）
+            holding = self.mode == PlayMode.EXPLORE and any(self._read_direction_keys())
+            self.player.update_visual(dt, linear=holding)  # 平滑移动插值
             if self.player.animator is not None:
                 self.player.animator.update(dt)
         for e in self._dying:
@@ -316,6 +313,10 @@ class PlayState(BaseState):
             ):
                 self.player.play_anim("idle")
 
+        # 探索模式：按住方向键连续行走（轮询按键状态，无需连点）
+        if self.mode == PlayMode.EXPLORE:
+            self._update_explore_movement(dt)
+
         if self.mode == PlayMode.BATTLE and self.battle:
             if self.battle.is_enemy_turn:
                 self.battle.step_enemy_turn()
@@ -336,6 +337,41 @@ class PlayState(BaseState):
         )
 
     # ========== 探索模式 ==========
+
+    def _update_explore_movement(self, dt: float) -> None:
+        """
+        长按连续行走：轮询方向键，冷却结束即走一格。
+
+        冷却间隔与滑步动画时长一致，按住时角色连续滑动不顿挫；
+        任何界面（背包/商店/休息）打开时不响应移动。
+        """
+        if self.player is None or self.floor is None:
+            return
+        if (
+            self._inventory_menu is not None
+            or self._shop_menu is not None
+            or self._rest_menu is not None
+        ):
+            return
+        self._move_cooldown -= dt
+        if self._move_cooldown > 0:
+            return
+        dx, dy = self._read_direction_keys()
+        if dx != 0 or dy != 0:
+            self._try_explore_move(dx, dy)
+            # 略短于动画时长：在滑步完成前衔接下一格，消除格间空窗停顿
+            # （move_to 从当前视觉位置出发，速度连续；松开后末段自动减速）
+            self._move_cooldown = config.MOVE_ANIM_DURATION * 0.8
+
+    @staticmethod
+    def _read_direction_keys() -> tuple[int, int]:
+        """读取按住的方向键 → (dx, dy)。同按时水平优先（不允许斜向）。"""
+        keys = pygame.key.get_pressed()
+        dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
+        dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
+        if dx != 0 and dy != 0:
+            dy = 0
+        return (dx, dy)
 
     def _try_explore_move(self, dx: int, dy: int) -> None:
         assert self.player and self.floor
