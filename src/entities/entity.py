@@ -21,7 +21,7 @@ class Entity:
     """实体基类。坐标用 Vector2（浮点），网格运算时取整。"""
 
     __slots__ = ("position", "stats", "color", "name", "status_effects", "element_resist",
-                 "animator", "facing")
+                 "animator", "facing", "visual_pos", "_move_from", "_move_t", "move_duration")
 
     def __init__(
         self,
@@ -41,6 +41,12 @@ class Entity:
         # 动画：animator 由子类按素材构建；None 时走几何色块渲染
         self.animator: "Animator | None" = None
         self.facing: str = "down"  # up / down / left / right
+        # 平滑移动：visual_pos（渲染坐标）向 position（逻辑坐标）插值。
+        # 逻辑判定立即用新格子；画面在 move_duration 内滑过去，避免瞬移感。
+        self.move_duration: float = config.MOVE_ANIM_DURATION
+        self.visual_pos: Vector2 = self.position.copy()
+        self._move_from: Vector2 = self.position.copy()
+        self._move_t: float = 1.0  # 插值进度 0→1，1.0 表示已到位
 
     # ========== 网格坐标访问 ==========
 
@@ -61,15 +67,38 @@ class Entity:
 
     # ========== 移动 ==========
 
-    def move_to(self, gx: int, gy: int) -> None:
-        """直接移动到瓦片 (gx, gy)。不做合法性校验，由调用方保证。"""
+    def move_to(self, gx: int, gy: int, instant: bool = False) -> None:
+        """
+        移动到瓦片 (gx, gy)。不做合法性校验，由调用方保证。
+
+        instant=True 时视觉立即到位（换层/读档等瞬移场景）；
+        否则视觉坐标在 move_duration 内从当前位置平滑滑向新格子。
+        """
         self.position.x = float(gx)
         self.position.y = float(gy)
+        if instant:
+            self.visual_pos = self.position.copy()
+            self._move_from = self.position.copy()
+            self._move_t = 1.0
+        else:
+            # 从当前视觉位置出发（连续移动时动画衔接不跳变）
+            self._move_from = self.visual_pos.copy()
+            self._move_t = 0.0
 
     def move_by(self, dx: int, dy: int) -> None:
         """相对移动 (dx, dy) 格。"""
-        self.position.x += dx
-        self.position.y += dy
+        self.move_to(self.grid_x + dx, self.grid_y + dy)
+
+    # ========== 平滑移动插值 ==========
+
+    def update_visual(self, dt: float) -> None:
+        """推进视觉坐标插值（ease-out cubic），每帧由状态层调用。"""
+        if self._move_t >= 1.0:
+            return
+        self._move_t = min(1.0, self._move_t + dt / max(0.01, self.move_duration))
+        t = 1.0 - (1.0 - self._move_t) ** 3
+        self.visual_pos.x = self._move_from.x + (self.position.x - self._move_from.x) * t
+        self.visual_pos.y = self._move_from.y + (self.position.y - self._move_from.y) * t
 
     # ========== 朝向与动画 ==========
 
@@ -105,8 +134,8 @@ class Entity:
         否则退回默认色块。
         """
         ts = config.TILE_SIZE
-        sx = int((self.position.x - cam_x) * ts)
-        sy = int((self.position.y - cam_y) * ts)
+        sx = int((self.visual_pos.x - cam_x) * ts)
+        sy = int((self.visual_pos.y - cam_y) * ts)
         if self.animator is not None:
             frame = self.animator.surface
             if frame is not None:

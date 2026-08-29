@@ -19,6 +19,7 @@ TILE_SIZE = 32               # 单个瓦片边长（像素）
 ROOM_MAX_SIZE = 12           # 单个房间最大边长（瓦片数）
 MAP_MAX_SIZE = 40            # 单层地图最大边长（瓦片数）
 MAX_FLOOR_LEVEL = 3          # 游戏最大楼层数（达到后击败 Boss 即通关）
+MOVE_ANIM_DURATION = 0.15    # 格间平滑移动动画时长（秒）
 
 # ========== 战斗数值 ==========
 AP_MAX = 5                   # 每回合行动点上限

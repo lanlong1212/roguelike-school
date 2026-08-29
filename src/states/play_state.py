@@ -157,7 +157,7 @@ class PlayState(BaseState):
         self.player = Player()  # 先用默认属性创建，apply_save_to_player 覆盖
         save_manager.apply_save_to_player(self.player, data)
         px, py = data["player"]["x"], data["player"]["y"]
-        self.player.move_to(px, py)
+        self.player.move_to(px, py, instant=True)
         self._kills = data.get("kills", 0)
         # 恢复已清空房间（避免读档后重复刷怪）
         self._cleared_room_positions = {
@@ -282,9 +282,12 @@ class PlayState(BaseState):
             self._floating_texts = [t for t in self._floating_texts if t.update(dt)]
 
         # 实体动画推进（玩家 / 战斗敌人 / 死亡演出）
-        if self.player is not None and self.player.animator is not None:
-            self.player.animator.update(dt)
+        if self.player is not None:
+            self.player.update_visual(dt)  # 平滑移动插值
+            if self.player.animator is not None:
+                self.player.animator.update(dt)
         for e in self._dying:
+            e.update_visual(dt)
             if e.animator is not None:
                 e.animator.update(dt)
         # 死亡动画播完 → 移出演出列表（消失）
@@ -294,13 +297,23 @@ class PlayState(BaseState):
         ]
         if self.battle is not None:
             for e in self.battle.enemies:
-                if e.animator is not None and not e.stats.is_dead():
-                    e.animator.update(dt)
+                if not e.stats.is_dead():
+                    e.update_visual(dt)  # 平滑移动插值
+                    if e.animator is not None:
+                        e.animator.update(dt)
 
-        # 探索模式：一段时间未移动 → 回到待机动画
-        if self.mode == PlayMode.EXPLORE and self.player is not None:
+        # 相机每帧跟随玩家视觉位置（平滑移动时镜头同步滑动）
+        self._update_camera()
+
+        # 静止超时 → 回待机动画（阈值需大于 walk 一轮时长，避免长按时被
+        # 系统按键重复间隔打断；仅打断 walk，不碰 attack/death）
+        if self.player is not None:
             self._idle_timer += dt
-            if self._idle_timer > 0.25:
+            if (
+                self._idle_timer > 0.7
+                and self.player.animator is not None
+                and self.player.animator.current.startswith("walk")
+            ):
                 self.player.play_anim("idle")
 
         if self.mode == PlayMode.BATTLE and self.battle:
@@ -359,6 +372,7 @@ class PlayState(BaseState):
         self.player.move_to(
             int(self.floor.player_spawn.x),
             int(self.floor.player_spawn.y),
+            instant=True,
         )
         self.player.stats.reset_ap()
         self.mode = PlayMode.EXPLORE
@@ -793,8 +807,8 @@ class PlayState(BaseState):
         if result is None or target is None:
             return
         ts = config.TILE_SIZE
-        sx = (target.position.x - self.camera.x) * ts + ts // 4
-        sy = (target.position.y - self.camera.y) * ts - 4
+        sx = (target.visual_pos.x - self.camera.x) * ts + ts // 4
+        sy = (target.visual_pos.y - self.camera.y) * ts - 4
         # 飘字文本：暴击加感叹号
         text = f"-{result.damage}" + ("!" if result.is_crit else "")
         # 颜色：元素技能用元素色，否则按暴击/普通
@@ -828,8 +842,8 @@ class PlayState(BaseState):
         text = f"-{result.damage}"
         color = (255, 100, 100)
         ts = config.TILE_SIZE
-        sx = (target.position.x - self.camera.x) * ts + ts // 4
-        sy = (target.position.y - self.camera.y) * ts - 4
+        sx = (target.visual_pos.x - self.camera.x) * ts + ts // 4
+        sy = (target.visual_pos.y - self.camera.y) * ts - 4
         self._floating_texts.append(FloatingText(text, sx, sy, color))
         self.battle.last_damage_result = None
         self.battle.last_damage_target = None
@@ -837,6 +851,8 @@ class PlayState(BaseState):
     def _after_player_action(self) -> None:
         """玩家执行行动后：刷新高亮、迷雾、相机，检查战斗结束。"""
         assert self.player and self.floor and self.battle
+        # 动画：有新行动输入，静止计时清零（walk 播完 0.7s 后自然回 idle）
+        self._idle_timer = 0.0
         # Day 8：更新击杀计数（敌人死亡时）
         for enemy in self.battle.enemies:
             if enemy.stats.is_dead() and id(enemy) not in self._counted_kills:
@@ -977,8 +993,9 @@ class PlayState(BaseState):
         ts = config.TILE_SIZE
         tiles_x = config.SCREEN_WIDTH / ts
         tiles_y = config.SCREEN_HEIGHT / ts
-        cam_target_x = self.player.position.x - tiles_x / 2
-        cam_target_y = self.player.position.y - tiles_y / 2
+        # 跟随视觉坐标：平滑移动时镜头同步滑动
+        cam_target_x = self.player.visual_pos.x - tiles_x / 2
+        cam_target_y = self.player.visual_pos.y - tiles_y / 2
         max_cam_x = max(0, self.floor.map_width - tiles_x)
         max_cam_y = max(0, self.floor.map_height - tiles_y)
         self.camera.x = max(0, min(cam_target_x, max_cam_x))
@@ -1160,8 +1177,8 @@ class PlayState(BaseState):
     def _draw_enemy_overhead(self, screen, enemy, cam_x: float, cam_y: float) -> None:
         """敌人头顶标记：附着元素外圈描边 + 状态效果小字。"""
         ts = config.TILE_SIZE
-        sx = int((enemy.position.x - cam_x) * ts)
-        sy = int((enemy.position.y - cam_y) * ts)
+        sx = int((enemy.visual_pos.x - cam_x) * ts)
+        sy = int((enemy.visual_pos.y - cam_y) * ts)
         # 附着元素：瓦片外圈按元素着色
         aura = enemy.status_effects.aura
         if aura is not None and aura is not Element.NONE:
@@ -1355,8 +1372,8 @@ class PlayState(BaseState):
                         self.battle.last_action_desc = f"使用 {name}，回复 {healed} HP"
                         # 生成绿色治疗飘字
                         ts = config.TILE_SIZE
-                        sx = (self.player.position.x - self.camera.x) * ts + ts // 4
-                        sy = (self.player.position.y - self.camera.y) * ts - 4
+                        sx = (self.player.visual_pos.x - self.camera.x) * ts + ts // 4
+                        sy = (self.player.visual_pos.y - self.camera.y) * ts - 4
                         self._floating_texts.append(
                             FloatingText(f"+{healed}", sx, sy, (100, 255, 100))
                         )
@@ -1379,8 +1396,8 @@ class PlayState(BaseState):
             healed = self.player.stats.hp - hp_before
             if healed > 0:
                 ts = config.TILE_SIZE
-                sx = (self.player.position.x - self.camera.x) * ts + ts // 4
-                sy = (self.player.position.y - self.camera.y) * ts - 4
+                sx = (self.player.visual_pos.x - self.camera.x) * ts + ts // 4
+                sy = (self.player.visual_pos.y - self.camera.y) * ts - 4
                 self._floating_texts.append(
                     FloatingText(f"+{healed}", sx, sy, (100, 255, 100))
                 )
