@@ -10,6 +10,8 @@
 使用约定：
     - 相对路径基于 assets/images/（如 "player/idle/down"、"skeleton/idle"）
     - convert_alpha 在无显示环境（无头测试）下自动跳过
+    - 加载后自动裁掉透明边距再等比放大至瓦片尺寸（素材画布常含大量
+      透明留白，直接缩放会导致角色显示过小、看起来像色块）
 """
 from __future__ import annotations
 
@@ -28,6 +30,37 @@ def _convert(surf: pygame.Surface) -> pygame.Surface:
     if pygame.display.get_surface() is not None:
         return surf.convert_alpha()
     return surf
+
+
+def _trim_and_fit(raw: list[pygame.Surface], size: int) -> list[pygame.Surface]:
+    """
+    裁掉透明边距后等比缩放至 size×size 透明画布并居中。
+
+    使用全部帧的联合非透明包围盒裁剪，保证帧间内容对齐不抖动；
+    等比缩放避免角色被拉伸变形。
+    """
+    if not raw:
+        return []
+    # 联合包围盒：所有帧所有连通区域的并集
+    rects: list[pygame.Rect] = []
+    for s in raw:
+        rects.extend(pygame.mask.from_surface(s).get_bounding_rects())
+    if not rects:
+        # 全透明素材，回退为直接缩放
+        return [pygame.transform.scale(s, (size, size)) for s in raw]
+    box = rects[0].unionall(rects)
+    # 等比缩放至适配瓦片，居中放置
+    bw, bh = box.w, box.h
+    scale = min(size / bw, size / bh)
+    nw, nh = max(1, round(bw * scale)), max(1, round(bh * scale))
+    frames: list[pygame.Surface] = []
+    for s in raw:
+        canvas = pygame.Surface((size, size), pygame.SRCALPHA)
+        cropped = s.subsurface(box).copy()
+        canvas.blit(pygame.transform.scale(cropped, (nw, nh)),
+                    ((size - nw) // 2, (size - nh) // 2))
+        frames.append(canvas)
+    return frames
 
 
 class AssetManager:
@@ -75,9 +108,7 @@ class AssetManager:
             raw = [sheet.subsurface((i * h, 0, h, h)) for i in range(n)]
 
         ts = config.TILE_SIZE
-        frames = [
-            _convert(pygame.transform.scale(s, (ts, ts))) for s in raw
-        ]
+        frames = [_convert(s) for s in _trim_and_fit(raw, ts)]
         self._frames[rel] = frames
         return frames
 

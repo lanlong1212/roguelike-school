@@ -69,17 +69,12 @@ class Enemy(Entity):
     # ========== 渲染 ==========
 
     def render(self, screen, cam_x: float, cam_y: float) -> None:
-        """覆盖渲染：敌人画红色圆角方块 + HP 条。"""
+        """先按动画帧渲染（无素材时基类回退色块），再画头顶 HP 条。"""
         import pygame
+        super().render(screen, cam_x, cam_y)
         ts = config.TILE_SIZE
         sx = int((self.position.x - cam_x) * ts)
         sy = int((self.position.y - cam_y) * ts)
-        inset = 4
-        rect = pygame.Rect(
-            sx + inset, sy + inset, ts - inset * 2, ts - inset * 2
-        )
-        pygame.draw.rect(screen, self.color, rect, border_radius=4)
-        pygame.draw.rect(screen, config.BLACK, rect, 1, border_radius=4)
 
         # 头顶 HP 条（仅在受伤时显示）
         if self.stats.hp < self.stats.max_hp:

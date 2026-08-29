@@ -297,19 +297,3 @@ class Player(Entity):
         self.move_to(target_gx, target_gy)
         return True
 
-    # ========== 渲染 ==========
-
-    def render(self, screen, cam_x: float, cam_y: float) -> None:
-        import pygame
-        ts = config.TILE_SIZE
-        sx = int((self.position.x - cam_x) * ts)
-        sy = int((self.position.y - cam_y) * ts)
-        inset = 3
-        rect = pygame.Rect(
-            sx + inset, sy + inset, ts - inset * 2, ts - inset * 2
-        )
-        pygame.draw.rect(screen, self.color, rect, border_radius=8)
-        pygame.draw.rect(screen, config.WHITE, rect, 2, border_radius=8)
-        cx = sx + ts // 2
-        cy = sy + ts // 2
-        pygame.draw.circle(screen, config.WHITE, (cx, cy), 3)
