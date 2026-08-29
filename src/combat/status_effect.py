@@ -9,6 +9,8 @@
     - SHOCK  感电：受击伤害 ×1.5（雷+水 反应）
     - DEF_DOWN 破甲：防御 -50%（雷+冰 反应）
     - SLOW   减速：下回合 AP 上限 -1（寒冰箭附加）
+    - MELT   熔化：受击伤害 ×1.25（火+冰 反应）
+    - OVERLOAD 超载：回合结束受到 magnitude 点雷伤（雷+火 反应）
 
     状态附加到实体上，由战斗管理器在回合开始/结束时统一处理。
     容器同时负责元素附着的存储（_aura），由 element 模块读写。
@@ -31,6 +33,8 @@ class EffectType(Enum):
     SHOCK = auto()     # 感电
     DEF_DOWN = auto()  # 破甲
     SLOW = auto()      # 减速（AP 上限 -1）
+    MELT = auto()      # 熔化：受击伤害 ×1.25
+    OVERLOAD = auto()  # 超载：回合结束受到 magnitude 点雷伤
 
 
 # 类型 → 显示名（用于 UI）
@@ -41,6 +45,8 @@ EFFECT_DISPLAY_NAME: dict[EffectType, str] = {
     EffectType.SHOCK: "感电",
     EffectType.DEF_DOWN: "破甲",
     EffectType.SLOW: "减速",
+    EffectType.MELT: "熔化",
+    EffectType.OVERLOAD: "超载",
 }
 
 
@@ -158,7 +164,14 @@ class StatusEffectContainer:
         return logs
 
     def on_turn_end(self, entity: "Entity") -> list[str]:
-        """回合结束时调用：所有非护盾效果时长 -1，归零移除。"""
+        """回合结束时调用：超载结算雷伤，随后非护盾效果时长 -1，归零移除。"""
+        logs: list[str] = []
+        # 超载：回合结束受到 magnitude 点雷伤（先结算再倒计时）
+        overload = self.get(EffectType.OVERLOAD)
+        if overload is not None and not entity.stats.is_dead():
+            dmg = max(1, overload.magnitude)
+            entity.stats.take_damage(dmg)
+            logs.append(f"超载雷爆对 {entity.name} 造成 {dmg} 点伤害")
         remaining: list[StatusEffect] = []
         for e in self._effects:
             if e.effect_type != EffectType.SHIELD:
@@ -166,7 +179,7 @@ class StatusEffectContainer:
             if e.duration > 0:
                 remaining.append(e)
         self._effects = remaining
-        return []
+        return logs
 
     def absorb_damage(self, amount: int) -> int:
         """
