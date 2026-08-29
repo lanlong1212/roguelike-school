@@ -132,12 +132,12 @@ class Talent:
     desc: str    # 描述
 
 
-# 天赋池：学习时按 id 应用到 Stats
+# 天赋池：学习时按 id 应用到 Stats（攻击强化只走技能与武器，天赋不加攻击）
 _TALENT_POOL: list[Talent] = [
     Talent(
-        id="crit_up",
-        name="暴击精研",
-        desc="暴击率 +10%",
+        id="hp_up",
+        name="生命增幅",
+        desc="最大生命 +10%",
     ),
     Talent(
         id="ap_up",
@@ -161,8 +161,10 @@ def get_talent_pool() -> list[Talent]:
 
 def _apply_talent_effect(player: "Player", talent_id: str) -> None:
     """天赋学习效果：永久修改玩家属性。新增天赋时在此分支。"""
-    if talent_id == "crit_up":
-        player.stats.crit_rate = min(1.0, player.stats.crit_rate + 0.10)
+    if talent_id == "hp_up":
+        increase = max(1, round(player.stats.max_hp * 0.10))
+        player.stats.max_hp += increase
+        player.stats.hp += increase
     elif talent_id == "ap_up":
         player.stats.max_ap += 1
     elif talent_id == "move_up":

@@ -132,6 +132,10 @@ def has_save() -> bool:
 def apply_save_to_player(player, data: dict) -> None:
     """把存档数据恢复到玩家对象（属性、背包、装备）。"""
     p = data["player"]
+    # 先重放已学天赋（HP/AP/移动加成），随后属性由存档值精确覆盖，
+    # 避免序列化值与天赋重放叠加导致翻倍
+    for tid in p.get("talents", []):
+        player.learn_talent(tid)
     player.stats.max_hp = p["max_hp"]
     player.stats.hp = min(p["hp"], p["max_hp"])
     player.stats.atk = p["atk"]
@@ -155,10 +159,6 @@ def apply_save_to_player(player, data: dict) -> None:
     if saved_skills:
         for sid in saved_skills:
             player.learn_skill(sid)
-
-    # 恢复已学天赋（重放属性效果）
-    for tid in p.get("talents", []):
-        player.learn_talent(tid)
 
 
 def clear_save() -> None:

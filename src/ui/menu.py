@@ -344,7 +344,7 @@ class RestMenu:
         ]
         panel = self.panel.rect
         self.row_rects = [
-            pygame.Rect(panel.x + 40, panel.y + 88 + i * 56, panel.width - 80, 48)
+            pygame.Rect(panel.x + 40, panel.y + 88 + i * 40, panel.width - 80, 34)
             for i in range(len(self._entries))
         ]
 
@@ -360,7 +360,9 @@ class RestMenu:
             for btn in self.buttons:
                 btn.update(dt)
 
-    def draw(self, screen, font) -> None:
+    def draw(self, screen, font, small_font=None) -> None:
+        """绘制界面。small_font 用于强化列表行（更小的字）；缺省回退 font。"""
+        small = small_font if small_font is not None else font
         # 半透明遮罩
         overlay = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 170))
@@ -383,7 +385,7 @@ class RestMenu:
             train_desc = font.render("学习一个天赋或技能", True, (180, 180, 180))
             screen.blit(train_desc, (self.panel.rect.x + 60, self.btn_train.rect.y + 66))
         else:
-            # 强化列表视图（天赋在前）
+            # 强化列表视图（天赋在前），行内文字用小字号
             header = font.render("选择一项强化：", True, (220, 220, 220))
             screen.blit(header, (self.panel.rect.x + 40, self.panel.rect.y + 56))
             if not self._entries:
@@ -397,12 +399,12 @@ class RestMenu:
                 pygame.draw.rect(screen, border, rect, 1, border_radius=4)
                 if kind == "talent":
                     talent = self.unlearned_talents[idx]
-                    tag = font.render("【天赋】", True, (200, 150, 255))
-                    name = font.render(talent.name, True, (230, 210, 255))
-                    desc = font.render(talent.desc, True, (170, 170, 170))
-                    screen.blit(tag, (rect.x + 10, rect.y + 5))
-                    screen.blit(name, (rect.x + 86, rect.y + 5))
-                    screen.blit(desc, (rect.x + 10, rect.y + 26))
+                    tag = small.render("【天赋】", True, (200, 150, 255))
+                    name = small.render(talent.name, True, (230, 210, 255))
+                    desc = small.render(talent.desc, True, (170, 170, 170))
+                    screen.blit(tag, (rect.x + 10, rect.y + 2))
+                    screen.blit(name, (rect.x + 64, rect.y + 2))
+                    screen.blit(desc, (rect.x + 10, rect.y + 18))
                 else:
                     skill = self.unlearned_skills[idx]
                     from src.combat.element import ELEMENT_COLOR, Element
@@ -410,10 +412,10 @@ class RestMenu:
                         ELEMENT_COLOR[skill.element]
                         if skill.element is not Element.NONE else (230, 230, 230)
                     )
-                    name_text = font.render(skill.name, True, name_color)
-                    screen.blit(name_text, (rect.x + 86, rect.y + 5))
-                    desc_text = font.render(skill.desc, True, (170, 170, 170))
-                    screen.blit(desc_text, (rect.x + 10, rect.y + 26))
+                    name_text = small.render(skill.name, True, name_color)
+                    screen.blit(name_text, (rect.x + 64, rect.y + 2))
+                    desc_text = small.render(skill.desc, True, (170, 170, 170))
+                    screen.blit(desc_text, (rect.x + 10, rect.y + 18))
 
     def handle_click(self, pos: tuple[int, int]) -> bool:
         # 关闭按钮

@@ -76,7 +76,7 @@ class Stats:
         return True
 
     def refund_ap(self, cost: int) -> None:
-        """退还 AP（撤销行动用，MVP 暂不撤销但留接口）。"""
+        """退还 AP（撤销行动用，暂不撤销但留接口）。"""
         self.ap = min(self.max_ap, self.ap + cost)
 
     def reset_ap(self) -> None:

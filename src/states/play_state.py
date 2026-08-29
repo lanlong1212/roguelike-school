@@ -1045,7 +1045,7 @@ class PlayState(BaseState):
         # 休息界面
         if self._rest_menu is not None:
             self._rest_menu.update(0)
-            self._rest_menu.draw(screen, self.game.font)
+            self._rest_menu.draw(screen, self.game.font, self.game.font_small)
 
     def _draw_battle_highlights(self, screen, cam_x, cam_y, ts) -> None:
         """绘制可移动（蓝）/可攻击（红）半透明高亮。"""
