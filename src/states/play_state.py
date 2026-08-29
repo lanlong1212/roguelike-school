@@ -23,10 +23,10 @@ from src.combat.status_effect import EFFECT_DISPLAY_NAME
 from src.core import config
 from src.core import save_manager
 from src.entities.enemy import Enemy
-from src.entities.player import Player, Skill
+from src.entities.player import Player, Skill, get_skill_pool
 from src.states.base_state import BaseState
 from src.ui.hud import HUD
-from src.ui.menu import InventoryMenu, ShopMenu
+from src.ui.menu import InventoryMenu, RestMenu, ShopMenu
 from src.utils.vector import Vector2
 from src.world.floor import Floor
 from src.world.fog_of_war import FogState
@@ -128,7 +128,9 @@ class PlayState(BaseState):
         # 商店：当前打开的商店界面 / 各房间库存（按房间 id 保留已售状态）
         self._shop_menu: ShopMenu | None = None
         self._shop_stocks: dict[int, list] = {}
-        self._last_shop_room_id: int | None = None
+        # 休息房间：当前打开的休息界面 / 各房间是否已使用（按房间 id）
+        self._rest_menu: RestMenu | None = None
+        self._rest_used: set[int] = set()
 
     # ========== 生命周期 ==========
 
@@ -183,10 +185,13 @@ class PlayState(BaseState):
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
-            # ESC → 商店开着则先关商店；否则 Day 8：暂停
+            # ESC → 商店/休息界面开着则先关闭；否则 Day 8：暂停
             if event.key == pygame.K_ESCAPE:
                 if self._shop_menu is not None:
                     self._shop_menu = None
+                    return
+                if self._rest_menu is not None:
+                    self._rest_menu = None
                     return
                 from src.states.pause_state import PauseState
                 self.game.push_state(PauseState(self.game, play_state=self))
@@ -207,8 +212,8 @@ class PlayState(BaseState):
             if self._inventory_menu is not None:
                 return
 
-            # 商店打开时只响应 Esc（已在上面处理）与鼠标点击
-            if self._shop_menu is not None:
+            # 商店/休息界面打开时只响应 Esc（已在上面处理）与鼠标点击
+            if self._shop_menu is not None or self._rest_menu is not None:
                 return
 
             if self.mode == PlayMode.EXPLORE:
@@ -256,8 +261,15 @@ class PlayState(BaseState):
             if self._shop_menu is not None:
                 self._shop_menu.handle_click(event.pos)
                 return
+            # 休息界面打开时点击休息界面
+            if self._rest_menu is not None:
+                self._rest_menu.handle_click(event.pos)
+                return
             if self.mode == PlayMode.BATTLE:
                 self._handle_battle_click(event.pos)
+            else:
+                # 探索模式：点击商店/休息房间的地图图标进入
+                self._handle_explore_click(event.pos)
 
     def update(self, dt):
         """每帧推进敌人回合 + 飘字动画。"""
@@ -330,7 +342,9 @@ class PlayState(BaseState):
         # 新楼层：清空商店状态（房间是新对象，id 不复用）
         self._shop_menu = None
         self._shop_stocks.clear()
-        self._last_shop_room_id = None  
+        # 新楼层：清空休息房间状态
+        self._rest_menu = None
+        self._rest_used.clear()
         self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
         self._update_camera()
         self._update_current_room()
@@ -341,7 +355,7 @@ class PlayState(BaseState):
         self._autosave()
 
     def _update_current_room(self) -> None:
-        """更新玩家当前所在房间，进入战斗房则触发战斗，进入商店房则打开商店。"""
+        """更新玩家当前所在房间：进入战斗房触发战斗；商店/休息房改为点击地图图标进入。"""
         assert self.player and self.floor
         gx, gy = self.player.grid_x, self.player.grid_y
         for room in self.floor.rooms:
@@ -356,14 +370,9 @@ class PlayState(BaseState):
                     ):
                         self._battles_triggered.add(id(room))
                         self._start_battle(room)
-                # 商店房：进入时打开商店（同房间内不重复打开，离开后重进会再打开）
-                elif room.room_type == RoomType.SHOP:
-                    if self._shop_menu is None and self._last_shop_room_id != id(room):
-                        self._open_shop(room)
+                # 商店/休息房：不自动打开，玩家点击地图图标进入
                 return
         self._current_room = None
-        # 离开房间：允许下次进入商店时重新打开
-        self._last_shop_room_id = None
 
     # ========== 商店 ==========
 
@@ -373,7 +382,6 @@ class PlayState(BaseState):
         if stock is None:
             stock = self._create_shop_stock()
             self._shop_stocks[id(room)] = stock
-        self._last_shop_room_id = id(room)
         self._shop_menu = ShopMenu(
             self.player,
             stock,
@@ -414,6 +422,45 @@ class PlayState(BaseState):
         self.player.inventory.add(item)
         shop.mark_sold(index)
         self._last_loot_desc = f"购买了 {item.name}"
+
+    # ========== 休息房间 ==========
+
+    def _open_rest(self, room: Room) -> None:
+        """打开休息界面。休息/强化每次进房间只能二选一使用一次。"""
+        if id(room) in self._rest_used:
+            self._last_loot_desc = "此房间已经休息过了"
+            return
+        unlearned = [s for s in get_skill_pool() if self.player.get_skill(s.id) is None]
+        self._rest_menu = RestMenu(
+            self.player,
+            unlearned,
+            on_rest=self._do_rest,
+            on_learn=self._do_learn,
+            on_close=self._close_rest,
+        )
+
+    def _do_rest(self) -> None:
+        """休息：回复 50% 最大生命值，本房间不可再用。"""
+        if self.player is None or self._current_room is None:
+            return
+        heal = max(1, self.player.stats.max_hp // 2)
+        self.player.stats.heal(heal)
+        self._rest_used.add(id(self._current_room))
+        self._rest_menu = None
+        self._last_loot_desc = f"休息回复了 {heal} HP"
+
+    def _do_learn(self, skill) -> None:
+        """强化：学习一个技能，本房间不可再用。"""
+        if self.player is None or self._current_room is None:
+            return
+        self.player.learn_skill(skill.id)
+        self._rest_used.add(id(self._current_room))
+        self._rest_menu = None
+        self._last_loot_desc = f"学会了新技能：{skill.name}"
+
+    def _close_rest(self) -> None:
+        """关闭休息界面。"""
+        self._rest_menu = None
 
     # ========== 战斗模式 ==========
 
@@ -519,6 +566,22 @@ class PlayState(BaseState):
             dist = max(abs(ex - px), abs(ey - py))  # 切比雪夫距离
             if dist <= attack_range:
                 self._attack_targets[(ex, ey)] = enemy
+
+    def _handle_explore_click(self, mouse_pos: tuple[int, int]) -> None:
+        """探索模式点击：点中商店/休息房间的图标格 → 打开对应界面。"""
+        assert self.player and self.floor
+        ts = config.TILE_SIZE
+        cam_x, cam_y = self.camera.x, self.camera.y
+        gx = int(mouse_pos[0] / ts + cam_x)
+        gy = int(mouse_pos[1] / ts + cam_y)
+        # 只能进入玩家当前所在房间的图标（避免隔空点远处商店）
+        room = self._current_room
+        if room is None or not room.contains(gx, gy):
+            return
+        if room.room_type == RoomType.SHOP:
+            self._open_shop(room)
+        elif room.room_type == RoomType.REST:
+            self._open_rest(room)
 
     def _handle_battle_click(self, mouse_pos: tuple[int, int]) -> None:
         """
@@ -791,6 +854,10 @@ class PlayState(BaseState):
             # Boss 房击败后（阶梯已激活）不再显示"王"标签，避免与楼梯重叠
             if room.room_type == RoomType.BOSS and self.floor.stair_active:
                 continue
+            # 商店/休息房间：绘制可点击的色块图标
+            if room.room_type in (RoomType.SHOP, RoomType.REST):
+                self._draw_room_icon(screen, room, cam_x, cam_y, ts)
+                continue
             label, color = _ROOM_TYPE_LABEL.get(room.room_type, ("?", config.WHITE))
             sx = int((center.x - cam_x) * ts + ts // 2)
             sy = int((center.y - cam_y) * ts + ts // 2)
@@ -825,6 +892,10 @@ class PlayState(BaseState):
         if self._shop_menu is not None:
             self._shop_menu.update(0)
             self._shop_menu.draw(screen, self.game.font)
+        # 休息界面
+        if self._rest_menu is not None:
+            self._rest_menu.update(0)
+            self._rest_menu.draw(screen, self.game.font)
 
     def _draw_battle_highlights(self, screen, cam_x, cam_y, ts) -> None:
         """绘制可移动（蓝）/可攻击（红）半透明高亮。"""
@@ -868,6 +939,23 @@ class PlayState(BaseState):
         surf.fill(color)
         self._fog_surfaces[key] = surf
         return surf
+
+    def _draw_room_icon(self, screen, room: Room, cam_x: float, cam_y: float, ts: int) -> None:
+        """绘制商店/休息房间的可点击色块图标（房间中心）。"""
+        center = room.center()
+        sx = int((center.x - cam_x) * ts + ts // 2)
+        sy = int((center.y - cam_y) * ts + ts // 2)
+        size = int(ts * 0.75)
+        rect = pygame.Rect(sx - size // 2, sy - size // 2, size, size)
+        # 商店金色 / 休息绿色
+        color = (230, 210, 60) if room.room_type == RoomType.SHOP else (120, 220, 120)
+        pygame.draw.rect(screen, color, rect, border_radius=4)
+        pygame.draw.rect(screen, (255, 255, 255), rect, 2, border_radius=4)
+        # 图标标记：商店"¥" / 休息"+"（用文字简写）
+        mark = "¥" if room.room_type == RoomType.SHOP else "+"
+        text_surf = self.game.font_small.render(mark, True, (20, 20, 20))
+        text_rect = text_surf.get_rect(center=rect.center)
+        screen.blit(text_surf, text_rect)
 
     def _draw_enemy_overhead(self, screen, enemy, cam_x: float, cam_y: float) -> None:
         """敌人头顶标记：附着元素外圈描边 + 状态效果小字。"""

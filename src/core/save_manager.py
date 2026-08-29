@@ -97,6 +97,7 @@ def save_game(
             "x": int(pos.x),
             "y": int(pos.y),
             "gold": player.gold,
+            "skills": [s.id for s in player.skills],
             **_serialize_stats(player),
         },
         "inventory": items,
@@ -147,6 +148,12 @@ def apply_save_to_player(player, data: dict) -> None:
     if equipped_id:
         weapon = _create_item(equipped_id)
         player.inventory.equip_weapon(weapon)
+
+    # 恢复已学技能（basic_attack 必在，其余按存档补全）
+    saved_skills = data.get("player", {}).get("skills")
+    if saved_skills:
+        for sid in saved_skills:
+            player.learn_skill(sid)
 
 
 def clear_save() -> None:

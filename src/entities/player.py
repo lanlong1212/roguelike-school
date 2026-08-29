@@ -10,8 +10,13 @@ Day 5 扩展：
     - Skill 增加 element 字段（物理/火/水/冰/雷）
     - 新增寒冰箭/水弹/雷击，凑齐 4 种元素技能用于元素反应
 
+休息房间扩展（技能学习）：
+    - 玩家初始只拥有 basic_attack
+    - _SKILL_POOL 定义可学习技能池，休息房间"强化"从中学习
+    - learn_skill(skill_id) 将技能加入已学列表（去重）
+
 技能配置：
-    basic_attack  基础攻击  2 AP  相邻 1 格  1.0×  物理
+    basic_attack  基础攻击  2 AP  相邻 1 格  1.0×  物理   （初始自带）
     charge_slash  冲锋斩    3 AP  相邻 1 格  1.8×  物理
     fireball      火球术    3 AP  5 格      1.8×  火
     ice_arrow     寒冰箭    3 AP  4 格      1.6×  冰
@@ -43,8 +48,9 @@ class Skill:
     element: Element = Element.NONE  # 技能元素（命中附着，触发反应）
 
 
-# 玩家默认技能列表
-_DEFAULT_SKILLS: list[Skill] = [
+# ========== 可学习技能池 ==========
+# 玩家初始只拥有 basic_attack，其余技能通过休息房间"强化"从池中学习。
+_SKILL_POOL: list[Skill] = [
     Skill(
         id="basic_attack",
         name="基础攻击",
@@ -100,6 +106,11 @@ _DEFAULT_SKILLS: list[Skill] = [
 ]
 
 
+def get_skill_pool() -> list[Skill]:
+    """返回技能池副本（供休息房间"强化"选择）。"""
+    return [Skill(**s.__dict__) for s in _SKILL_POOL]
+
+
 class Player(Entity):
     """玩家角色。"""
 
@@ -117,14 +128,26 @@ class Player(Entity):
             color=config.COLOR_PLAYER,
             name="Player",
         )
-        # 技能列表（深拷贝避免共享）
-        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _DEFAULT_SKILLS]
+        # 技能列表（深拷贝避免共享）：初始仅基础攻击
+        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _SKILL_POOL[:1]]
         # 当前选中的技能（None=未选中，使用基础攻击）
         self.selected_skill: Skill | None = None
         # Day 7：背包系统
         self.inventory: Inventory = Inventory(self)
         # 本局货币（商店购买用，初始 START_GOLD）
         self.gold: int = config.START_GOLD
+
+    # ========== 技能学习接口 ==========
+
+    def learn_skill(self, skill_id: str) -> bool:
+        """从技能池学习一个技能（已学会返回 False）。"""
+        if self.get_skill(skill_id) is not None:
+            return False
+        for s in _SKILL_POOL:
+            if s.id == skill_id:
+                self.skills.append(Skill(**s.__dict__))
+                return True
+        return False
 
     # ========== 技能接口 ==========
 
