@@ -280,31 +280,36 @@ class ShopMenu:
 
 
 class RestMenu:
-    """休息房间界面：休息（回血）或强化（学习技能）。
+    """休息房间界面：休息（回血）或强化（学习技能/天赋）。
 
     提供两个操作：
     - 休息：回复玩家 50% 最大 HP（由调用方 on_rest 实现）
-    - 强化：从技能池选择一个未学技能学习（on_learn(skill) 实现）
-    点击"强化"后切换到技能列表视图，选择技能后关闭。
+    - 强化：从「天赋 + 技能」混合列表中选择一项学习
+      （on_learn_talent(Talent) / on_learn(Skill) 实现）
+    点击"强化"后切换到列表视图（天赋在前），选择后关闭。
     """
 
     def __init__(
         self,
         player,
         unlearned_skills: list,
+        unlearned_talents: list | None = None,
         on_rest=None,
         on_learn=None,
+        on_learn_talent=None,
         on_close=None,
     ):
         self.player = player
         self.unlearned_skills = unlearned_skills  # list[Skill] 尚未学习的技能
+        self.unlearned_talents = unlearned_talents or []  # list[Talent] 尚未学习的天赋
         self.on_rest = on_rest
         self.on_learn = on_learn
+        self.on_learn_talent = on_learn_talent
         self.on_close = on_close
-        self.showing_skills = False  # True=技能选择视图
+        self.showing_skills = False  # True=强化选择视图
         sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
         # 面板
-        panel_w, panel_h = 520, 420
+        panel_w, panel_h = 520, 470
         panel_x = (sw - panel_w) // 2
         panel_y = (sh - panel_h) // 2
         self.panel = Panel(pygame.Rect(panel_x, panel_y, panel_w, panel_h))
@@ -326,16 +331,27 @@ class RestMenu:
             "强化", on_click=None, color=(80, 70, 120),
         )
         self.buttons: list[Button] = [self.btn_rest, self.btn_train]
-        # 技能列表行
-        self.skill_rects: list[pygame.Rect] = []
-        for i in range(len(unlearned_skills)):
-            row_y = panel_y + 90 + i * 76
-            self.skill_rects.append(pygame.Rect(panel_x + 40, row_y, panel_w - 80, 64))
+        # 强化列表行（天赋在前）：[(kind, index), ...]
+        self._entries: list[tuple[str, int]] = []
+        self._refresh_entries()
+
+    def _refresh_entries(self) -> None:
+        """重建强化列表条目：天赋在前，技能在后。"""
+        self._entries = [
+            ("talent", i) for i in range(len(self.unlearned_talents))
+        ] + [
+            ("skill", i) for i in range(len(self.unlearned_skills))
+        ]
+        panel = self.panel.rect
+        self.row_rects = [
+            pygame.Rect(panel.x + 40, panel.y + 88 + i * 56, panel.width - 80, 48)
+            for i in range(len(self._entries))
+        ]
 
     # ========== 视图切换 ==========
 
     def enter_skill_view(self) -> None:
-        """点击"强化"后切换到技能列表视图。"""
+        """点击"强化"后切换到选择列表视图。"""
         self.showing_skills = True
 
     def update(self, dt: float) -> None:
@@ -364,31 +380,40 @@ class RestMenu:
             rest_desc = font.render("回复 50% 生命值", True, (180, 180, 180))
             screen.blit(rest_desc, (self.panel.rect.x + 60, self.btn_rest.rect.y + 66))
             self.btn_train.draw(screen, font)
-            train_desc = font.render("从技能池中学习一个新技能", True, (180, 180, 180))
+            train_desc = font.render("学习一个天赋或技能", True, (180, 180, 180))
             screen.blit(train_desc, (self.panel.rect.x + 60, self.btn_train.rect.y + 66))
         else:
-            # 技能列表视图
-            header = font.render("选择一个技能学习：", True, (220, 220, 220))
+            # 强化列表视图（天赋在前）
+            header = font.render("选择一项强化：", True, (220, 220, 220))
             screen.blit(header, (self.panel.rect.x + 40, self.panel.rect.y + 56))
-            if not self.unlearned_skills:
-                empty = font.render("已学会全部技能", True, (150, 150, 150))
+            if not self._entries:
+                empty = font.render("已学完全部天赋与技能", True, (150, 150, 150))
                 screen.blit(empty, (self.panel.rect.x + 40, self.panel.rect.y + 100))
                 return
-            for i, skill in enumerate(self.unlearned_skills):
-                rect = self.skill_rects[i]
+            for i, (kind, idx) in enumerate(self._entries):
+                rect = self.row_rects[i]
+                border = (170, 120, 220) if kind == "talent" else (110, 160, 110)
                 pygame.draw.rect(screen, (40, 40, 55), rect, border_radius=4)
-                pygame.draw.rect(screen, (110, 160, 110), rect, 1, border_radius=4)
-                # 技能名（元素色）
-                from src.combat.element import ELEMENT_COLOR, Element
-                name_color = (
-                    ELEMENT_COLOR[skill.element]
-                    if skill.element is not Element.NONE else (230, 230, 230)
-                )
-                name_text = font.render(skill.name, True, name_color)
-                screen.blit(name_text, (rect.x + 10, rect.y + 6))
-                # 描述
-                desc_text = font.render(skill.desc, True, (170, 170, 170))
-                screen.blit(desc_text, (rect.x + 10, rect.y + 32))
+                pygame.draw.rect(screen, border, rect, 1, border_radius=4)
+                if kind == "talent":
+                    talent = self.unlearned_talents[idx]
+                    tag = font.render("【天赋】", True, (200, 150, 255))
+                    name = font.render(talent.name, True, (230, 210, 255))
+                    desc = font.render(talent.desc, True, (170, 170, 170))
+                    screen.blit(tag, (rect.x + 10, rect.y + 5))
+                    screen.blit(name, (rect.x + 86, rect.y + 5))
+                    screen.blit(desc, (rect.x + 10, rect.y + 26))
+                else:
+                    skill = self.unlearned_skills[idx]
+                    from src.combat.element import ELEMENT_COLOR, Element
+                    name_color = (
+                        ELEMENT_COLOR[skill.element]
+                        if skill.element is not Element.NONE else (230, 230, 230)
+                    )
+                    name_text = font.render(skill.name, True, name_color)
+                    screen.blit(name_text, (rect.x + 86, rect.y + 5))
+                    desc_text = font.render(skill.desc, True, (170, 170, 170))
+                    screen.blit(desc_text, (rect.x + 10, rect.y + 26))
 
     def handle_click(self, pos: tuple[int, int]) -> bool:
         # 关闭按钮
@@ -402,16 +427,19 @@ class RestMenu:
                     self.on_rest()
                 return True
             if self.btn_train.handle_click(pos):
-                if self.unlearned_skills:
+                if self._entries:
                     self.enter_skill_view()
                 return True
             return False
-        # 技能列表视图：点击技能学习
-        for i, rect in enumerate(self.skill_rects):
-            if i >= len(self.unlearned_skills):
+        # 强化列表视图：点击条目学习
+        for i, rect in enumerate(self.row_rects):
+            if i >= len(self._entries):
                 break
             if rect.collidepoint(pos):
-                if self.on_learn:
-                    self.on_learn(self.unlearned_skills[i])
+                kind, idx = self._entries[i]
+                if kind == "talent" and self.on_learn_talent:
+                    self.on_learn_talent(self.unlearned_talents[idx])
+                elif kind == "skill" and self.on_learn:
+                    self.on_learn(self.unlearned_skills[idx])
                 return True
         return False

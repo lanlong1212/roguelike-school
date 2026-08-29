@@ -122,6 +122,53 @@ def get_skill_pool() -> list[Skill]:
     return [Skill(**s.__dict__) for s in _SKILL_POOL]
 
 
+# ========== 被动天赋（PRD 技能子系统：升级三选一节点） ==========
+
+@dataclass
+class Talent:
+    """被动天赋数据类。学习即永久生效（直接修改 Stats）。"""
+    id: str      # 天赋标识
+    name: str    # 显示名
+    desc: str    # 描述
+
+
+# 天赋池：学习时按 id 应用到 Stats
+_TALENT_POOL: list[Talent] = [
+    Talent(
+        id="crit_up",
+        name="暴击精研",
+        desc="暴击率 +10%",
+    ),
+    Talent(
+        id="ap_up",
+        name="精力充沛",
+        desc="AP 上限 +1",
+    ),
+    Talent(
+        id="move_up",
+        name="轻步疾行",
+        desc="战斗移动范围 +1 格",
+    ),
+]
+
+
+def get_talent_pool() -> list[Talent]:
+    """返回天赋池副本。"""
+    return [
+        Talent(id=t.id, name=t.name, desc=t.desc) for t in _TALENT_POOL
+    ]
+
+
+def _apply_talent_effect(player: "Player", talent_id: str) -> None:
+    """天赋学习效果：永久修改玩家属性。新增天赋时在此分支。"""
+    if talent_id == "crit_up":
+        player.stats.crit_rate = min(1.0, player.stats.crit_rate + 0.10)
+    elif talent_id == "ap_up":
+        player.stats.max_ap += 1
+    elif talent_id == "move_up":
+        player.stats.move_range += 1
+
+
 class Player(Entity):
     """玩家角色。"""
 
@@ -147,6 +194,8 @@ class Player(Entity):
         self.inventory: Inventory = Inventory(self)
         # 本局货币（商店购买用，初始 START_GOLD）
         self.gold: int = config.START_GOLD
+        # 已学天赋 id 列表（被动天赋，学习即生效）
+        self.talents: list[str] = []
 
     # ========== 技能学习接口 ==========
 
@@ -159,6 +208,25 @@ class Player(Entity):
                 self.skills.append(Skill(**s.__dict__))
                 return True
         return False
+
+    # ========== 天赋接口 ==========
+
+    def learn_talent(self, talent_id: str) -> bool:
+        """学习天赋：属性永久生效（重复学习返回 False）。"""
+        if talent_id in self.talents:
+            return False
+        if not any(t.id == talent_id for t in _TALENT_POOL):
+            return False
+        self.talents.append(talent_id)
+        _apply_talent_effect(self, talent_id)
+        return True
+
+    def unlearned_talents(self) -> list[Talent]:
+        """返回尚未学习的天赋列表（供休息房间强化）。"""
+        return [
+            Talent(id=t.id, name=t.name, desc=t.desc)
+            for t in _TALENT_POOL if t.id not in self.talents
+        ]
 
     # ========== 技能接口 ==========
 

@@ -435,8 +435,10 @@ class PlayState(BaseState):
         self._rest_menu = RestMenu(
             self.player,
             unlearned,
+            unlearned_talents=self.player.unlearned_talents(),
             on_rest=self._do_rest,
             on_learn=self._do_learn,
+            on_learn_talent=self._do_learn_talent,
             on_close=self._close_rest,
         )
 
@@ -458,6 +460,15 @@ class PlayState(BaseState):
         self._rest_used.add(id(self._current_room))
         self._rest_menu = None
         self._last_loot_desc = f"学会了新技能：{skill.name}"
+
+    def _do_learn_talent(self, talent) -> None:
+        """强化：学习一个天赋（属性永久生效），本房间不可再用。"""
+        if self.player is None or self._current_room is None:
+            return
+        if self.player.learn_talent(talent.id):
+            self._rest_used.add(id(self._current_room))
+            self._rest_menu = None
+            self._last_loot_desc = f"习得天赋：{talent.name}（{talent.desc}）"
 
     def _close_rest(self) -> None:
         """关闭休息界面。"""

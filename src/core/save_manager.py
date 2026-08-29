@@ -98,6 +98,7 @@ def save_game(
             "y": int(pos.y),
             "gold": player.gold,
             "skills": [s.id for s in player.skills],
+            "talents": list(getattr(player, "talents", [])),
             **_serialize_stats(player),
         },
         "inventory": items,
@@ -154,6 +155,10 @@ def apply_save_to_player(player, data: dict) -> None:
     if saved_skills:
         for sid in saved_skills:
             player.learn_skill(sid)
+
+    # 恢复已学天赋（重放属性效果）
+    for tid in p.get("talents", []):
+        player.learn_talent(tid)
 
 
 def clear_save() -> None:
