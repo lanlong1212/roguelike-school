@@ -48,6 +48,7 @@ class Game:
 
         # ========== 字体 ==========
         self.font = _load_font(24)             # 普通文字
+        self.font_small = _load_font(14)       # 小字（角标/tooltip 说明）
         self.font_large = _load_font(48, bold=True)  # 标题文字
 
     # ========== 状态栈管理 ==========

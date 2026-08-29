@@ -886,41 +886,168 @@ class PlayState(BaseState):
             screen.blit(text_surf, (sx + ts // 2 - text_surf.get_width() // 2, sy - 14))
 
     def _draw_skill_bar(self, screen) -> None:
-        """绘制技能选择栏（数字键 1-6 切换）。"""
+        """绘制技能选择栏：图形图标 + 快捷键角标；悬停图标显示技能说明。"""
         assert self.player
         skills = self.player.skills
         bar_y = 88  # Day 8：避开 HUD 的 HP/AP 条（8~76 像素）
         bar_x = 10
-        slot_w = 190
-        slot_h = 32
-        gap = 6
+        slot_size = 46
+        gap = 8
+        mouse_pos = pygame.mouse.get_pos()
+        hovered_skill: Skill | None = None
+        hovered_rect: pygame.Rect | None = None
         for i, skill in enumerate(skills):
-            rect = pygame.Rect(bar_x + i * (slot_w + gap), bar_y, slot_w, slot_h)
+            rect = pygame.Rect(bar_x + i * (slot_size + gap), bar_y, slot_size, slot_size)
             # 选中态高亮
             is_selected = (i == self._selected_skill_index)
             bg = (60, 80, 120) if is_selected else (30, 30, 40)
             pygame.draw.rect(screen, bg, rect, border_radius=4)
             border_color = config.COLOR_TEXT_HIGHLIGHT if is_selected else config.GRAY
             pygame.draw.rect(screen, border_color, rect, 2, border_radius=4)
-            # 技能文本（元素技能按元素色）
-            element_tag = "" if skill.element is Element.NONE else f"【{ELEMENT_NAME[skill.element]}】"
-            txt = f"[{i+1}] {element_tag}{skill.name} {skill.ap_cost}AP {skill.multiplier}×"
-            text_color = ELEMENT_COLOR[skill.element] if skill.element is not Element.NONE else config.COLOR_TEXT
-            text_surf = self.game.font.render(txt, True, text_color)
-            screen.blit(text_surf, (rect.x + 6, rect.y + 6))
-            # AP 不足时灰显
+            # 技能图形图标
+            self._draw_skill_icon(screen, skill, rect)
+            # 快捷键数字角标（左上角）
+            num_surf = self.game.font_small.render(str(i + 1), True, (20, 20, 20))
+            pygame.draw.rect(screen, (255, 255, 255), (rect.x, rect.y, 15, 15))
+            screen.blit(num_surf, (rect.x + 2, rect.y + 1))
+            # AP 充足时右下角显示 AP 消耗
+            if self.player.stats.ap >= skill.ap_cost:
+                ap_surf = self.game.font_small.render(f"{skill.ap_cost}AP", True, (190, 220, 255))
+                screen.blit(ap_surf, (rect.right - ap_surf.get_width() - 3, rect.bottom - ap_surf.get_height() - 1))
+            # AP 不足时整格灰显
             if self.player.stats.ap < skill.ap_cost:
-                overlay = pygame.Surface((slot_w, slot_h), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 140))
+                overlay = pygame.Surface((slot_size, slot_size), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 160))
                 screen.blit(overlay, rect)
-        # 移动模式标记
-        if self._selected_skill_index < 0:
-            rect = pygame.Rect(bar_x + len(skills) * (slot_w + gap), bar_y, slot_w, slot_h)
-            pygame.draw.rect(screen, (60, 120, 80), rect, border_radius=4)
-            pygame.draw.rect(screen, config.COLOR_TEXT_HIGHLIGHT, rect, 2, border_radius=4)
-            txt = "[M] 移动模式"
-            text_surf = self.game.font.render(txt, True, config.COLOR_TEXT)
-            screen.blit(text_surf, (rect.x + 6, rect.y + 6))
+            # 悬停检测
+            if rect.collidepoint(mouse_pos):
+                hovered_skill = skill
+                hovered_rect = rect
+        # 移动模式标记（尾部补一个移动图标格）
+        move_rect = pygame.Rect(
+            bar_x + len(skills) * (slot_size + gap), bar_y, slot_size, slot_size
+        )
+        is_move = self._selected_skill_index < 0
+        pygame.draw.rect(screen, (60, 120, 80) if is_move else (30, 30, 40), move_rect, border_radius=4)
+        pygame.draw.rect(screen, config.COLOR_TEXT_HIGHLIGHT if is_move else config.GRAY, move_rect, 2, border_radius=4)
+        # 移动图标：向右箭头
+        pygame.draw.polygon(screen, (120, 220, 140), [
+            (move_rect.centerx - 5, move_rect.centery - 9),
+            (move_rect.centerx + 9, move_rect.centery),
+            (move_rect.centerx - 5, move_rect.centery + 9),
+        ])
+        # 悬停移动格也提示
+        if move_rect.collidepoint(mouse_pos):
+            hovered_skill = Skill(
+                id="move_mode", name="移动模式", ap_cost=0, range_cells=0,
+                multiplier=1.0, desc="点击蓝色格子移动，不消耗技能。按 M 键切换。",
+            )
+            hovered_rect = move_rect
+        # 悬停说明面板
+        if hovered_skill is not None and hovered_rect is not None:
+            self._draw_skill_tooltip(screen, hovered_skill, hovered_rect)
+
+    # ========== 技能图标绘制 ==========
+
+    def _draw_skill_icon(self, screen, skill: Skill, rect: pygame.Rect) -> None:
+        """在图标格内绘制技能图形（按技能类型/元素区分）。"""
+        cx, cy = rect.centerx, rect.centery
+        if skill.id == "basic_attack":
+            self._draw_sword(screen, cx, cy, (200, 200, 210))
+        elif skill.id == "charge_slash":
+            self._draw_sword(screen, cx, cy, (255, 160, 90), slash=True)
+        elif skill.element is Element.FIRE:
+            self._draw_flame(screen, cx, cy, ELEMENT_COLOR[Element.FIRE])
+        elif skill.element is Element.ICE:
+            self._draw_snowflake(screen, cx, cy, ELEMENT_COLOR[Element.ICE])
+        elif skill.element is Element.WATER:
+            self._draw_droplet(screen, cx, cy, ELEMENT_COLOR[Element.WATER])
+        elif skill.element is Element.LIGHTNING:
+            self._draw_bolt(screen, cx, cy, ELEMENT_COLOR[Element.LIGHTNING])
+
+    @staticmethod
+    def _draw_sword(screen, cx: int, cy: int, color, slash: bool = False) -> None:
+        """剑形图标。slash=True 时画成斜斩。"""
+        if not slash:
+            pygame.draw.polygon(screen, color, [
+                (cx - 4, cy - 13), (cx + 4, cy - 13), (cx, cy - 6),
+            ])  # 剑尖
+            pygame.draw.line(screen, color, (cx, cy - 12), (cx, cy + 6), 3)  # 剑身
+            pygame.draw.line(screen, color, (cx - 6, cy + 6), (cx + 6, cy + 6), 3)  # 护手
+            pygame.draw.line(screen, color, (cx, cy + 6), (cx, cy + 11), 3)  # 剑柄
+        else:
+            # 斜斩：两道交叉弧线（简单用斜线模拟挥砍轨迹）
+            pygame.draw.line(screen, color, (cx - 11, cy + 9), (cx + 9, cy - 11), 3)
+            pygame.draw.line(screen, color, (cx - 7, cy + 11), (cx + 11, cy - 7), 3)
+
+    @staticmethod
+    def _draw_flame(screen, cx: int, cy: int, color) -> None:
+        """火苗图标：外圈火 + 亮色内核。"""
+        pygame.draw.circle(screen, color, (cx - 2, cy + 3), 8)
+        pygame.draw.polygon(screen, color, [
+            (cx - 6, cy - 1), (cx + 6, cy - 1), (cx, cy - 12),
+        ])  # 火苗尖
+        pygame.draw.circle(screen, (255, 240, 180), (cx - 2, cy + 2), 4)
+
+    @staticmethod
+    def _draw_snowflake(screen, cx: int, cy: int, color) -> None:
+        """冰晶图标：六角雪花（三条交叉轴）。"""
+        for i in range(3):
+            import math
+            ang = math.radians(i * 60)
+            dx, dy = math.cos(ang) * 10, math.sin(ang) * 10
+            pygame.draw.line(screen, color, (cx - dx, cy - dy), (cx + dx, cy + dy), 2)
+
+    @staticmethod
+    def _draw_droplet(screen, cx: int, cy: int, color) -> None:
+        """水滴图标：圆 + 顶部尖。"""
+        pygame.draw.circle(screen, color, (cx, cy + 3), 7)
+        pygame.draw.polygon(screen, color, [
+            (cx - 6, cy + 1), (cx + 6, cy + 1), (cx, cy - 10),
+        ])
+
+    @staticmethod
+    def _draw_bolt(screen, cx: int, cy: int, color) -> None:
+        """闪电图标：折线多边形。"""
+        pygame.draw.polygon(screen, color, [
+            (cx + 4, cy - 12), (cx - 5, cy + 1), (cx - 1, cy + 1),
+            (cx - 4, cy + 12), (cx + 5, cy - 1), (cx + 1, cy - 1),
+        ])
+
+    # ========== 技能说明面板（悬停） ==========
+
+    def _draw_skill_tooltip(self, screen, skill: Skill, anchor: pygame.Rect) -> None:
+        """悬停技能图标时绘制说明面板。"""
+        element_tag = "" if skill.element is Element.NONE else f"· {ELEMENT_NAME[skill.element]}属性"
+        title_color = (
+            ELEMENT_COLOR[skill.element]
+            if skill.element is not Element.NONE else config.COLOR_TEXT_HIGHLIGHT
+        )
+        lines: list[tuple[str, tuple, object]] = [
+            (skill.name, title_color, self.game.font),
+            (
+                f"消耗 {skill.ap_cost} AP  倍率 {skill.multiplier}×  射程 {skill.range_cells} 格{element_tag}",
+                config.COLOR_TEXT, self.game.font_small,
+            ),
+            (skill.desc, (200, 200, 200), self.game.font_small),
+        ]
+        pad = 8
+        line_h = 18
+        panel_w = max(font.size(t)[0] for t, _, font in lines) + pad * 2
+        panel_h = pad * 2 + line_h * len(lines)
+        x = anchor.x
+        y = anchor.bottom + 6
+        if y + panel_h > config.SCREEN_HEIGHT - 10:
+            y = anchor.top - panel_h - 6
+        if x + panel_w > config.SCREEN_WIDTH - 10:
+            x = config.SCREEN_WIDTH - panel_w - 10
+        bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        bg.fill((20, 20, 30, 235))
+        screen.blit(bg, (x, y))
+        pygame.draw.rect(screen, (110, 110, 130), (x, y, panel_w, panel_h), 1, border_radius=4)
+        for idx, (text, color, font) in enumerate(lines):
+            surf = font.render(text, True, color)
+            screen.blit(surf, (x + pad, y + pad + idx * line_h))
 
     def _use_first_potion(self) -> None:
         """Day 7：使用背包里第一个药水（H 键）。"""
