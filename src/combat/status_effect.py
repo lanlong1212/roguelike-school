@@ -8,6 +8,7 @@
     - FREEZE 冻结：跳过下一回合行动（冰+水 反应）
     - SHOCK  感电：受击伤害 ×1.5（雷+水 反应）
     - DEF_DOWN 破甲：防御 -50%（雷+冰 反应）
+    - SLOW   减速：下回合 AP 上限 -1（寒冰箭附加）
 
     状态附加到实体上，由战斗管理器在回合开始/结束时统一处理。
     容器同时负责元素附着的存储（_aura），由 element 模块读写。
@@ -29,6 +30,7 @@ class EffectType(Enum):
     FREEZE = auto()    # 冻结
     SHOCK = auto()     # 感电
     DEF_DOWN = auto()  # 破甲
+    SLOW = auto()      # 减速（AP 上限 -1）
 
 
 # 类型 → 显示名（用于 UI）
@@ -38,6 +40,7 @@ EFFECT_DISPLAY_NAME: dict[EffectType, str] = {
     EffectType.FREEZE: "冻结",
     EffectType.SHOCK: "感电",
     EffectType.DEF_DOWN: "破甲",
+    EffectType.SLOW: "减速",
 }
 
 

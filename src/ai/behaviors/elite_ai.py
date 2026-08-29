@@ -95,7 +95,12 @@ def _elite_ranged_attack(actor: "Entity", ctx: "BattleManager", multiplier: floa
 # ========== 阶段 1：远程消耗 ==========
 
 def _is_player_in_range1(actor: "Entity", ctx: "BattleManager") -> bool:
-    return _distance(actor, ctx.player) <= 4
+    """玩家在射程内且视线无遮挡（障碍柱/墙会挡能量箭）。"""
+    if _distance(actor, ctx.player) > 4:
+        return False
+    return ctx.tilemap.has_line_of_sight(
+        actor.grid_x, actor.grid_y, ctx.player.grid_x, ctx.player.grid_y
+    )
 
 
 def _is_player_too_close1(actor: "Entity", ctx: "BattleManager") -> bool:

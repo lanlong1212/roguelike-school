@@ -15,19 +15,25 @@ Day 5 扩展：
     - _SKILL_POOL 定义可学习技能池，休息房间"强化"从中学习
     - learn_skill(skill_id) 将技能加入已学列表（去重）
 
+战棋化扩展（AoE / 附加状态）：
+    - Skill 增加 aoe 字段：none 单体 / splash 3×3 溅射 / line 直线穿透
+    - Skill 增加 apply_effect 字段：命中附加状态（寒冰箭→减速）
+    - 远程技能需视线判定（tilemap.has_line_of_sight），可被障碍柱阻挡
+
 技能配置：
     basic_attack  基础攻击  2 AP  相邻 1 格  1.0×  物理   （初始自带）
     charge_slash  冲锋斩    3 AP  相邻 1 格  1.8×  物理
-    fireball      火球术    3 AP  5 格      1.8×  火
-    ice_arrow     寒冰箭    3 AP  4 格      1.6×  冰
+    fireball      火球术    3 AP  5 格      1.8×  火  3×3 溅射
+    ice_arrow     寒冰箭    3 AP  4 格      1.6×  冰  附加减速
     water_shot    水弹      2 AP  3 格      1.2×  水
-    lightning     雷击      3 AP  4 格      1.7×  雷
+    lightning     雷击      3 AP  4 格      1.7×  雷  直线穿透
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from src.combat.element import Element
+from src.combat.status_effect import EffectType
 from src.core import config
 from src.entities.entity import Entity
 from src.entities.stats import Stats
@@ -46,6 +52,8 @@ class Skill:
     multiplier: float  # 伤害倍率
     desc: str           # 技能描述
     element: Element = Element.NONE  # 技能元素（命中附着，触发反应）
+    aoe: str = "none"  # 范围形态：none 单体 / splash 3×3 / line 直线穿透
+    apply_effect: "EffectType | None" = None  # 命中附加状态（如减速）
 
 
 # ========== 可学习技能池 ==========
@@ -73,8 +81,9 @@ _SKILL_POOL: list[Skill] = [
         ap_cost=3,
         range_cells=5,
         multiplier=1.8,
-        desc="对 5 格内单体造成 ATK×1.8 火伤，附着火元素",
+        desc="对 5 格内目标及周围 3×3 造成 ATK×1.8 火伤，附着火元素",
         element=Element.FIRE,
+        aoe="splash",
     ),
     Skill(
         id="ice_arrow",
@@ -82,8 +91,9 @@ _SKILL_POOL: list[Skill] = [
         ap_cost=3,
         range_cells=4,
         multiplier=1.6,
-        desc="对 4 格内单体造成 ATK×1.6 冰伤，附着冰元素",
+        desc="对 4 格内单体造成 ATK×1.6 冰伤，附着冰元素并减速 1 回合",
         element=Element.ICE,
+        apply_effect=EffectType.SLOW,
     ),
     Skill(
         id="water_shot",
@@ -100,8 +110,9 @@ _SKILL_POOL: list[Skill] = [
         ap_cost=3,
         range_cells=4,
         multiplier=1.7,
-        desc="对 4 格内单体造成 ATK×1.7 雷伤，附着雷元素",
+        desc="对 4 格内直线全体造成 ATK×1.7 雷伤，附着雷元素",
         element=Element.LIGHTNING,
+        aoe="line",
     ),
 ]
 

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from src.combat.damage import apply_damage
 from src.combat.element import ELEMENT_NAME, REACTION_NAME, Element
+from src.combat.status_effect import EFFECT_DISPLAY_NAME, EffectType, StatusEffect
 from src.utils.vector import Vector2
 
 if TYPE_CHECKING:
@@ -94,6 +95,8 @@ class SkillAction(Action):
     """
     使用主动技能。Day 5 接入伤害计算。
     技能效果通过 multiplier 区分（基础攻击 1.0×，冲锋斩 1.8×，火球术 2.0×）。
+    战棋化：AoE 副目标通过 ap_cost=0 的额外 SkillAction 直接 execute 结算；
+    apply_effect 命中后给目标附加状态（如寒冰箭的减速）。
     """
 
     def __init__(
@@ -105,6 +108,7 @@ class SkillAction(Action):
         ap_cost: int = 3,
         skill_name: str = "技能",
         element: Element = Element.NONE,
+        apply_effect: "EffectType | None" = None,
     ):
         super().__init__(actor, ap_cost)
         self.target = target
@@ -112,6 +116,7 @@ class SkillAction(Action):
         self.multiplier = multiplier
         self.skill_name = skill_name
         self.element = element
+        self.apply_effect = apply_effect
 
     def execute(self, manager: "BattleManager") -> None:
         if self.target is None:
@@ -121,9 +126,15 @@ class SkillAction(Action):
         result = apply_damage(self.actor, self.target, self.multiplier, self.element)
         crit_str = " 暴击!" if result.is_crit else ""
         reaction_str = f" 触发{REACTION_NAME[result.reaction]}!" if result.reaction else ""
+        effect_str = ""
+        if self.apply_effect is not None and not self.target.stats.is_dead():
+            self.target.status_effects.add(
+                StatusEffect(self.apply_effect, duration=1, source_name=self.skill_name)
+            )
+            effect_str = f" 附加{EFFECT_DISPLAY_NAME[self.apply_effect]}"
         manager.last_action_desc = (
             f"{self.actor.name} 释放 {self.skill_name} → "
-            f"{self.target.name} -{result.damage} HP{crit_str}{reaction_str}"
+            f"{self.target.name} -{result.damage} HP{crit_str}{reaction_str}{effect_str}"
         )
         manager.last_damage_result = result
         manager.last_damage_target = self.target

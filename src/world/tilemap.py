@@ -80,6 +80,34 @@ class TileMap:
         t = self.get_tile(gx, gy)
         return t in (TileType.FLOOR, TileType.DOOR, TileType.TRAP, TileType.STAIR)
 
+    # ========== 战棋视线判定 ==========
+
+    def _line_cells(self, x0: int, y0: int, x1: int, y1: int):
+        """
+        Bresenham 步进：生成 (x0,y0)→(x1,y1) 路径格子（含两端）。
+        步数取 max(|dx|,|dy|)，每步按比例插值，贴合几何直线。
+        """
+        dx, dy = x1 - x0, y1 - y0
+        n = max(abs(dx), abs(dy))
+        if n == 0:
+            yield x0, y0
+            return
+        for i in range(n + 1):
+            yield x0 + round(dx * i / n), y0 + round(dy * i / n)
+
+    def has_line_of_sight(self, x0: int, y0: int, x1: int, y1: int) -> bool:
+        """
+        战斗视线判定：两端点之间路径上的中间格遇墙 → 视线被挡。
+        相邻格（距离 ≤1）无中间格，恒为可见。
+        """
+        for gx, gy in self._line_cells(x0, y0, x1, y1):
+            # 跳过起点与终点：起点是自身格，终点是目标所在格
+            if (gx, gy) == (x0, y0) or (gx, gy) == (x1, y1):
+                continue
+            if self.get_tile(gx, gy) == TileType.WALL:
+                return False
+        return True
+
     # ========== 遍历 ==========
 
     def __iter__(self):

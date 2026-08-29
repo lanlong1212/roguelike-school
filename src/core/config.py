@@ -24,6 +24,11 @@ MAX_FLOOR_LEVEL = 3          # 游戏最大楼层数（达到后击败 Boss 即�
 AP_MAX = 5                   # 每回合行动点上限
 MOVE_RANGE = 3               # 每回合移动格数上限
 
+# ========== 战棋化：战场障碍与 AoE ==========
+OBSTACLE_MIN = 2             # 战斗/精英房障碍柱数量下限
+OBSTACLE_MAX = 4             # 战斗/精英房障碍柱数量上限
+SPLASH_RADIUS = 1            # 火球溅射半径（3×3）
+
 # ========== 经济系统 ==========
 START_GOLD = 30              # 玩家初始金币
 GOLD_SLIME = 3               # 史莱姆掉落金币

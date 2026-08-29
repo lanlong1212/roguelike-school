@@ -115,8 +115,12 @@ def create_melee_ai() -> BehaviorTree:
 # ========== 远程 AI ==========
 
 def _is_player_in_ranged_range(actor: "Entity", ctx: "BattleManager") -> bool:
-    """玩家在 4 格内可远程攻击。"""
-    return _distance(actor, ctx.player) <= 4
+    """玩家在 4 格内且视线无遮挡（障碍柱/墙会挡箭）。"""
+    if _distance(actor, ctx.player) > 4:
+        return False
+    return ctx.tilemap.has_line_of_sight(
+        actor.grid_x, actor.grid_y, ctx.player.grid_x, ctx.player.grid_y
+    )
 
 
 def _is_player_too_close(actor: "Entity", ctx: "BattleManager") -> bool:

@@ -15,7 +15,7 @@ from src.utils.vector import Vector2
 from src.world.dungeon_generator import DungeonGenerator, DungeonResult
 from src.world.fog_of_war import FogOfWar
 from src.world.room import Room, RoomType
-from src.world.tilemap import TileMap
+from src.world.tilemap import TileMap, TileType
 
 
 # 每层房间类型配额：1 BOSS, 1 SHOP, 1 REST, 1 ELITE, 2 BATTLE（共 6 个）
@@ -78,6 +78,9 @@ class Floor:
         # Step 3: 分配房间类型
         self._assign_room_types()
 
+        # Step 3.5: 战斗/精英房生成障碍柱（战棋地形：卡位/卡视线）
+        self._place_battle_obstacles()
+
         # Step 4: 计算玩家出生点（REST/SHOP/START 房间中心）+ 初始迷雾
         self.player_spawn = self._pick_spawn()
         self.fog.update_visibility(self.player_spawn, tilemap=self.tilemap)
@@ -128,6 +131,54 @@ class Floor:
                 r.room_type = RoomType.BATTLE
         # 如果房间数刚好 6，这步会剩 1 ELITE + 2 BATTLE，与配额一致
         # 如果因生成异常房间<6，多余的类型位不报错
+
+    def _place_battle_obstacles(self) -> None:
+        """
+        在战斗/精英房内部随机放置障碍柱（WALL 单格）：
+        - 数量 OBSTACLE_MIN~OBSTACLE_MAX，使用楼层种子保证可复现
+        - 只放在房间内圈（边距 1），避开房间中心 2 格范围（敌人出生区）
+          与四角出生点
+        - 柱子之间不相邻（保持走廊感，单格散柱不会破坏连通性）
+        """
+        for room in self.rooms:
+            if room.room_type not in (RoomType.BATTLE, RoomType.ELITE):
+                continue
+            count = self.rng.randint(config.OBSTACLE_MIN, config.OBSTACLE_MAX)
+            # 候选格：内圈（不含边框）
+            candidates = [
+                (gx, gy)
+                for gx in range(room.x1 + 1, room.x2)
+                for gy in range(room.y1 + 1, room.y2)
+            ]
+            if not candidates:
+                continue
+            center = room.center()
+            cx, cy = int(center.x), int(center.y)
+            # 四角敌人出生点
+            corners = {
+                (room.x1 + 1, room.y1 + 1),
+                (room.x2 - 1, room.y1 + 1),
+                (room.x1 + 1, room.y2 - 1),
+                (room.x2 - 1, room.y2 - 1),
+            }
+            placed: list[tuple[int, int]] = []
+            for _ in range(count):
+                # 随机挑一个未用候选位（最多尝试 count*3 次）
+                for _try in range(count * 3):
+                    gx, gy = self.rng.choice(candidates)
+                    if (gx, gy) in placed:
+                        continue
+                    # 避开中心 2 格（精英/随从出生区）与四角出生点
+                    if max(abs(gx - cx), abs(gy - cy)) <= 2:
+                        continue
+                    if (gx, gy) in corners:
+                        continue
+                    # 与已有柱子不相邻（正交）
+                    if any(abs(gx - px) + abs(gy - py) == 1 for px, py in placed):
+                        continue
+                    self.tilemap.set_tile(gx, gy, TileType.WALL)
+                    placed.append((gx, gy))
+                    break
 
     def _pick_spawn(self) -> Vector2:
         """选择玩家出生位置：REST 房间中心。"""

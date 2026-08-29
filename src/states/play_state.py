@@ -571,11 +571,15 @@ class PlayState(BaseState):
 
         # BFS 从玩家位置出发，找攻击范围内所有敌人
         # 距离用切比雪夫距离（8 方向），range_cells=1 即相邻 8 格
+        # 战棋化：远程目标需视线无遮挡（相邻 1 格恒可见）
         px, py = start
         for (ex, ey), enemy in enemy_pos.items():
             dist = max(abs(ex - px), abs(ey - py))  # 切比雪夫距离
-            if dist <= attack_range:
-                self._attack_targets[(ex, ey)] = enemy
+            if dist > attack_range:
+                continue
+            if dist > 1 and not tilemap.has_line_of_sight(px, py, ex, ey):
+                continue
+            self._attack_targets[(ex, ey)] = enemy
 
     def _handle_explore_click(self, mouse_pos: tuple[int, int]) -> None:
         """探索模式点击：点中商店/休息房间的图标格 → 打开对应界面。"""
@@ -596,7 +600,7 @@ class PlayState(BaseState):
     def _handle_battle_click(self, mouse_pos: tuple[int, int]) -> None:
         """
         战斗中鼠标点击：
-        - 红格（攻击目标）→ 使用当前选中技能攻击
+        - 红格（攻击目标）→ 使用当前选中技能攻击（AoE 技能附带溅射/穿透）
         - 蓝格（可移动）→ 移动
         """
         assert self.player and self.floor and self.battle
@@ -613,6 +617,14 @@ class PlayState(BaseState):
             skills = self.player.skills
             if 0 <= self._selected_skill_index < len(skills):
                 skill = skills[self._selected_skill_index]
+                # 战棋化：远程技能需视线无遮挡（相邻 1 格恒通过）
+                dist = max(abs(gx - self.player.grid_x), abs(gy - self.player.grid_y))
+                if dist > 1 and not self.floor.tilemap.has_line_of_sight(
+                    self.player.grid_x, self.player.grid_y, gx, gy
+                ):
+                    return
+                # AoE 副目标（火球溅射 / 雷击穿透）
+                secondaries = self._aoe_secondary_enemies(skill, target)
                 # Day 5 统一走 SkillAction（含基础攻击 1.0×），元素系统传入技能元素
                 action = SkillAction(
                     actor=self.player,
@@ -622,9 +634,24 @@ class PlayState(BaseState):
                     ap_cost=skill.ap_cost,
                     skill_name=skill.name,
                     element=skill.element,
+                    apply_effect=skill.apply_effect,
                 )
                 if self.battle.execute_action(action):
                     self._spawn_damage_floating_text()
+                    # 副目标结算：不耗 AP、直接 execute（跳过回合切换检查）
+                    for extra in secondaries:
+                        extra_action = SkillAction(
+                            actor=self.player,
+                            target=extra,
+                            skill_id=skill.id,
+                            multiplier=skill.multiplier,
+                            ap_cost=0,
+                            skill_name=skill.name,
+                            element=skill.element,
+                            apply_effect=skill.apply_effect,
+                        )
+                        extra_action.execute(self.battle)
+                        self._spawn_damage_floating_text()
                     self._after_player_action()
             return
 
@@ -634,6 +661,90 @@ class PlayState(BaseState):
             if self.battle.execute_action(action):
                 self._after_player_action()
             return
+
+    # ========== AoE 范围计算（战棋化） ==========
+
+    def _splash_cells(self, center: tuple[int, int]) -> set[tuple[int, int]]:
+        """以 center 为中心的 3×3 溅射范围（切比雪夫半径 SPLASH_RADIUS）。"""
+        r = config.SPLASH_RADIUS
+        cx, cy = center
+        return {
+            (cx + dx, cy + dy)
+            for dx in range(-r, r + 1)
+            for dy in range(-r, r + 1)
+        }
+
+    def _line_beam_cells(
+        self, start: tuple[int, int], target: tuple[int, int], max_range: int
+    ) -> list[tuple[int, int]]:
+        """
+        直线穿透光束：从 start 经 target 沿同方向延伸至 max_range。
+        遇墙即断（障碍柱可阻挡雷击光束），返回不含起点的格子序列。
+        """
+        px, py = start
+        tx, ty = target
+        tilemap = self.floor.tilemap
+        line = list(tilemap._line_cells(px, py, tx, ty))  # 含起点
+        if len(line) < 2:
+            return []
+        cells = line[1:]  # 排除自身格
+        # 沿最后一步的方向延伸
+        sdx = line[-1][0] - line[-2][0]
+        sdy = line[-1][1] - line[-2][1]
+        cx, cy = tx + sdx, ty + sdy
+        steps = max(abs(tx - px), abs(ty - py))
+        while steps < max_range:
+            if not tilemap.in_bounds(cx, cy):
+                break
+            if tilemap.get_tile(cx, cy) == TileType.WALL:
+                break
+            cells.append((cx, cy))
+            cx += sdx
+            cy += sdy
+            steps += 1
+        return cells
+
+    def _aoe_secondary_enemies(self, skill, primary) -> list:
+        """按技能 AoE 形态返回主目标之外的受影响敌人。"""
+        if skill.aoe == "none" or self.battle is None:
+            return []
+        alive = [
+            e for e in self.battle.enemies
+            if e is not primary and not e.stats.is_dead()
+        ]
+        if skill.aoe == "splash":
+            cells = self._splash_cells(primary.grid_pos)
+            return [e for e in alive if e.grid_pos in cells]
+        if skill.aoe == "line":
+            beam = set(self._line_beam_cells(
+                self.player.grid_pos, primary.grid_pos, skill.range_cells
+            ))
+            return [e for e in alive if e.grid_pos in beam]
+        return []
+
+    def _get_aoe_preview_cells(self) -> set[tuple[int, int]]:
+        """鼠标悬停目标时计算 AoE 预览格（供高亮渲染）。"""
+        if self.battle is None or not self.battle.is_player_turn:
+            return set()
+        if self.player is None or self.floor is None:
+            return set()
+        skills = self.player.skills
+        if not (0 <= self._selected_skill_index < len(skills)):
+            return set()
+        skill = skills[self._selected_skill_index]
+        if skill.aoe == "none":
+            return set()
+        mouse = pygame.mouse.get_pos()
+        ts = config.TILE_SIZE
+        gx = int(mouse[0] / ts + self.camera.x)
+        gy = int(mouse[1] / ts + self.camera.y)
+        if (gx, gy) not in self._attack_targets:
+            return set()
+        if skill.aoe == "splash":
+            return self._splash_cells((gx, gy))
+        return set(self._line_beam_cells(
+            self.player.grid_pos, (gx, gy), skill.range_cells
+        ))
 
     def _spawn_damage_floating_text(self) -> None:
         """根据 battle.last_damage_result 生成飘字（含元素着色与反应提示）。"""
@@ -947,6 +1058,17 @@ class PlayState(BaseState):
             sy = int((gy - cam_y) * ts)
             screen.blit(attack_surf, (sx, sy))
 
+        # AoE 预览：悬停目标时橙色高亮溅射/穿透范围
+        preview = self._get_aoe_preview_cells()
+        if preview:
+            aoe_surf = self._get_highlight_surface((255, 160, 40, 90), ts)
+            for (gx, gy) in preview:
+                if (gx, gy) == self.player.grid_pos:
+                    continue
+                sx = int((gx - cam_x) * ts)
+                sy = int((gy - cam_y) * ts)
+                screen.blit(aoe_surf, (sx, sy))
+
     # ========== 辅助 ==========
 
     def _get_fog_surface(self, alpha: int, ts: int) -> pygame.Surface:
@@ -1135,6 +1257,9 @@ class PlayState(BaseState):
     def _draw_skill_tooltip(self, screen, skill: Skill, anchor: pygame.Rect) -> None:
         """悬停技能图标时绘制说明面板。"""
         element_tag = "" if skill.element is Element.NONE else f"· {ELEMENT_NAME[skill.element]}属性"
+        # 战棋化标签：AoE 形态 / 附加状态
+        aoe_tag = {"splash": "  3×3溅射", "line": "  直线穿透"}.get(skill.aoe, "")
+        effect_tag = f"  附加{EFFECT_DISPLAY_NAME[skill.apply_effect]}" if skill.apply_effect else ""
         title_color = (
             ELEMENT_COLOR[skill.element]
             if skill.element is not Element.NONE else config.COLOR_TEXT_HIGHLIGHT
@@ -1142,7 +1267,7 @@ class PlayState(BaseState):
         lines: list[tuple[str, tuple, object]] = [
             (skill.name, title_color, self.game.font),
             (
-                f"消耗 {skill.ap_cost} AP  倍率 {skill.multiplier}×  射程 {skill.range_cells} 格{element_tag}",
+                f"消耗 {skill.ap_cost} AP  倍率 {skill.multiplier}×  射程 {skill.range_cells} 格{element_tag}{aoe_tag}{effect_tag}",
                 config.COLOR_TEXT, self.game.font_small,
             ),
             (skill.desc, (200, 200, 200), self.game.font_small),

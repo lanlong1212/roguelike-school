@@ -17,6 +17,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from src.combat.action import Action, EndTurnAction
+from src.combat.status_effect import EffectType
 from src.entities.entity import Entity
 
 if TYPE_CHECKING:
@@ -115,6 +116,12 @@ class BattleManager:
 
     # ========== 敌人回合（Day 6 接入 AI） ==========
 
+    def _reset_ap_with_slow(self, entity: Entity) -> None:
+        """重置 AP；若带减速状态则上限 -1（寒冰箭等附加效果）。"""
+        entity.stats.reset_ap()
+        if entity.status_effects.has(EffectType.SLOW):
+            entity.stats.ap = max(0, entity.stats.ap - 1)
+
     def _start_enemy_turn(self) -> None:
         """切换到敌人回合：重置 AP、附着计时、处理敌人回合开始状态。"""
         self.phase = TurnPhase.ENEMY_TURN
@@ -122,7 +129,7 @@ class BattleManager:
         for enemy in self.enemies:
             if enemy.stats.is_dead():
                 continue
-            enemy.stats.reset_ap()
+            self._reset_ap_with_slow(enemy)
             # 附着持续计时 + 回合开始状态处理
             enemy.status_effects.tick_aura()
             logs = enemy.status_effects.on_turn_start(enemy)
@@ -176,7 +183,7 @@ class BattleManager:
         self.player.status_effects.tick_aura()
         logs = self.player.status_effects.on_turn_start(self.player)
         self.last_status_logs = logs
-        self.player.stats.reset_ap()
+        self._reset_ap_with_slow(self.player)
 
     # ========== 胜负判定 ==========
 
