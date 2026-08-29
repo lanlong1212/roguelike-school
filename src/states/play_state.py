@@ -52,6 +52,14 @@ _ROOM_TYPE_LABEL: dict[RoomType, tuple[str, tuple[int, int, int]]] = {
     RoomType.START:  ("始", config.COLOR_PLAYER),
 }
 
+# ========== 方向键 → 网格方向映射（WASD 与方向键等价） ==========
+_DIR_VECTORS: dict[int, tuple[int, int]] = {
+    pygame.K_d: (1, 0), pygame.K_RIGHT: (1, 0),
+    pygame.K_a: (-1, 0), pygame.K_LEFT: (-1, 0),
+    pygame.K_s: (0, 1), pygame.K_DOWN: (0, 1),
+    pygame.K_w: (0, -1), pygame.K_UP: (0, -1),
+}
+
 
 # ========== 飘字系统 ==========
 class FloatingText:
@@ -128,6 +136,8 @@ class PlayState(BaseState):
         self._idle_timer: float = 99.0
         # 探索长按连续行走：移动冷却（按住方向键每格间隔，衔接滑步动画）
         self._move_cooldown: float = 0.0
+        # 方向键按下顺序表（最新在末尾）：两轴冲突时最后按下的方向优先
+        self._key_order: list[int] = []
         self._last_loot_desc: str = ""
         # Day 9：测试模式（T 键切换，开局送全套物品用于测试装备系统）
         self._test_mode: bool = False
@@ -190,6 +200,21 @@ class PlayState(BaseState):
     # ========== 输入 ==========
 
     def handle_event(self, event):
+        # 方向键按下顺序记录（任何界面状态下都维护，保证长按方向状态一致）
+        if event.type == pygame.KEYUP:
+            if event.key in self._key_order:
+                self._key_order.remove(event.key)
+            return
+        if (
+            event.type == pygame.KEYDOWN
+            and not getattr(event, "repeat", False)
+            and event.key in _DIR_VECTORS
+        ):
+            # 过滤系统按键重复；重复收到已在列表中的键（异常情况）则移到最新
+            if event.key in self._key_order:
+                self._key_order.remove(event.key)
+            self._key_order.append(event.key)
+
         if event.type == pygame.KEYDOWN:
             # ESC → 商店/休息界面开着则先关闭；否则 Day 8：暂停
             if event.key == pygame.K_ESCAPE:
@@ -363,15 +388,19 @@ class PlayState(BaseState):
             # （move_to 从当前视觉位置出发，速度连续；松开后末段自动减速）
             self._move_cooldown = config.MOVE_ANIM_DURATION * 0.8
 
-    @staticmethod
-    def _read_direction_keys() -> tuple[int, int]:
-        """读取按住的方向键 → (dx, dy)。同按时水平优先（不允许斜向）。"""
+    def _read_direction_keys(self) -> tuple[int, int]:
+        """
+        读取按住的方向键 → (dx, dy)，最后按下的方向优先。
+
+        两轴冲突（如 W+A）时取最新按下的方向键单轴移动；松开后自动
+        回退到仍在按住的次新方向。只认 get_pressed() 中仍按住的键，
+        防止 KEYUP 丢失（如窗口失焦）产生幽灵方向。
+        """
         keys = pygame.key.get_pressed()
-        dx = (keys[pygame.K_d] or keys[pygame.K_RIGHT]) - (keys[pygame.K_a] or keys[pygame.K_LEFT])
-        dy = (keys[pygame.K_s] or keys[pygame.K_DOWN]) - (keys[pygame.K_w] or keys[pygame.K_UP])
-        if dx != 0 and dy != 0:
-            dy = 0
-        return (dx, dy)
+        for key in reversed(self._key_order):
+            if keys[key]:
+                return _DIR_VECTORS[key]
+        return (0, 0)
 
     def _try_explore_move(self, dx: int, dy: int) -> None:
         assert self.player and self.floor
