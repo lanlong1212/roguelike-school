@@ -123,6 +123,9 @@ class PlayState(BaseState):
         self._inventory_menu: InventoryMenu | None = None
         self._kills: int = 0  # 击杀数
         self._counted_kills: set[int] = set()  # 已计入击杀的敌人 id
+        # 动画：死亡演出中的尸体（死亡动画播完后移除）、探索静止计时
+        self._dying: list[Enemy] = []
+        self._idle_timer: float = 99.0
         self._last_loot_desc: str = ""
         # Day 9：测试模式（T 键切换，开局送全套物品用于测试装备系统）
         self._test_mode: bool = False
@@ -273,10 +276,32 @@ class PlayState(BaseState):
                 self._handle_explore_click(event.pos)
 
     def update(self, dt):
-        """每帧推进敌人回合 + 飘字动画。"""
+        """每帧推进敌人回合 + 飘字动画 + 实体动画。"""
         # 飘字更新（无论何种模式）
         if self._floating_texts:
             self._floating_texts = [t for t in self._floating_texts if t.update(dt)]
+
+        # 实体动画推进（玩家 / 战斗敌人 / 死亡演出）
+        if self.player is not None and self.player.animator is not None:
+            self.player.animator.update(dt)
+        for e in self._dying:
+            if e.animator is not None:
+                e.animator.update(dt)
+        # 死亡动画播完 → 移出演出列表（消失）
+        self._dying = [
+            e for e in self._dying
+            if e.animator is not None and not e.animator.is_finished
+        ]
+        if self.battle is not None:
+            for e in self.battle.enemies:
+                if e.animator is not None and not e.stats.is_dead():
+                    e.animator.update(dt)
+
+        # 探索模式：一段时间未移动 → 回到待机动画
+        if self.mode == PlayMode.EXPLORE and self.player is not None:
+            self._idle_timer += dt
+            if self._idle_timer > 0.25:
+                self.player.play_anim("idle")
 
         if self.mode == PlayMode.BATTLE and self.battle:
             if self.battle.is_enemy_turn:
@@ -302,7 +327,10 @@ class PlayState(BaseState):
     def _try_explore_move(self, dx: int, dy: int) -> None:
         assert self.player and self.floor
         old_pos = self.player.grid_pos
+        self.player.face(dx, dy)
+        self._idle_timer = 0.0
         if self.player.try_move_explore(dx, dy, self.floor.tilemap):
+            self.player.play_anim("walk")
             self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
             self._update_camera()
             self._update_current_room()
@@ -782,6 +810,10 @@ class PlayState(BaseState):
             self._floating_texts.append(
                 FloatingText(f"{REACTION_NAME[result.reaction]}!", sx, sy - 16, (255, 255, 255))
             )
+        # 受击动画（存活且有 hurt 状态时，如骷髅）
+        if not target.stats.is_dead():
+            if target.animator is not None and target.animator.has("hurt"):
+                target.animator.play("hurt", restart=True)
         # 清除一次性标记，避免重复生成
         self.battle.last_damage_result = None
         self.battle.last_damage_target = None
@@ -812,6 +844,10 @@ class PlayState(BaseState):
                 self._counted_kills.add(id(enemy))
                 # 商店经济：击杀掉落金币
                 self.player.gold += enemy.gold_reward
+                # 死亡动画演出：加入尸体列表，播完后消失
+                enemy.play_anim("death", restart=True)
+                if enemy.animator is not None and enemy not in self._dying:
+                    self._dying.append(enemy)
         # 战斗结束
         if self.battle.phase == TurnPhase.BATTLE_WON:
             is_boss = self._last_room and self._last_room.room_type == RoomType.BOSS
@@ -1021,6 +1057,9 @@ class PlayState(BaseState):
                 if not enemy.stats.is_dead():
                     enemy.render(screen, cam_x, cam_y)
                     self._draw_enemy_overhead(screen, enemy, cam_x, cam_y)
+        # 死亡演出中的尸体（死亡动画播放期间仍可见）
+        for corpse in self._dying:
+            corpse.render(screen, cam_x, cam_y)
 
         # ---------- 第六层：玩家 ----------
         self.player.render(screen, cam_x, cam_y)

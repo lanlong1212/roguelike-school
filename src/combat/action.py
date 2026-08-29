@@ -47,6 +47,11 @@ class MoveAction(Action):
         self.target = target
 
     def execute(self, manager: "BattleManager") -> None:
+        # 朝向与行走动画（按移动方向）
+        dx = int(self.target.x) - self.actor.grid_x
+        dy = int(self.target.y) - self.actor.grid_y
+        self.actor.face(dx, dy)
+        self.actor.play_anim("walk", restart=True)
         self.actor.move_to(int(self.target.x), int(self.target.y))
 
 
@@ -75,6 +80,11 @@ class AttackAction(Action):
         self.element = element
 
     def execute(self, manager: "BattleManager") -> None:
+        # 朝向目标 + 攻击动画（播完自动回 idle）
+        dx = self.target.grid_x - self.actor.grid_x
+        dy = self.target.grid_y - self.actor.grid_y
+        self.actor.face(dx, dy)
+        self.actor.play_anim("attack", restart=True)
         # 计算伤害并扣血（含元素附着/反应/护盾）
         result = apply_damage(self.actor, self.target, self.multiplier, self.element)
         # 暴击/元素/反应描述
@@ -122,6 +132,11 @@ class SkillAction(Action):
         if self.target is None:
             manager.last_action_desc = f"{self.actor.name} 释放 {self.skill_name}（无目标）"
             return
+        # 朝向目标 + 攻击动画（播完自动回 idle）
+        dx = self.target.grid_x - self.actor.grid_x
+        dy = self.target.grid_y - self.actor.grid_y
+        self.actor.face(dx, dy)
+        self.actor.play_anim("attack", restart=True)
         # 与 AttackAction 共用伤害逻辑（含元素附着/反应/护盾）
         result = apply_damage(self.actor, self.target, self.multiplier, self.element)
         crit_str = " 暴击!" if result.is_crit else ""

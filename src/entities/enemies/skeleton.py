@@ -42,3 +42,14 @@ class Skeleton(Enemy):
             Element.ICE: 1.25,
             Element.FIRE: 0.75,
         }
+        # 动画（横向帧表）：idle 4 / walk 8 / attack 9 / hurt 4 / death 6 帧
+        from src.core.asset_manager import assets
+        from src.entities.animation import Animator
+        anim = Animator()
+        anim.add("idle", assets.get_frames("entities/skeleton/idle"), 8)
+        anim.add("walk", assets.get_frames("entities/skeleton/walk"), 10)
+        anim.add("attack", assets.get_frames("entities/skeleton/attack"), 12, loop=False, on_finish="idle")
+        anim.add("hurt", assets.get_frames("entities/skeleton/hurt"), 12, loop=False, on_finish="idle")
+        anim.add("death", assets.get_frames("entities/skeleton/death"), 10, loop=False)
+        anim.play("idle")
+        self.animator = anim

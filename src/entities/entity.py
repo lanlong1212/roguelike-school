@@ -20,7 +20,8 @@ from src.utils.vector import Vector2
 class Entity:
     """实体基类。坐标用 Vector2（浮点），网格运算时取整。"""
 
-    __slots__ = ("position", "stats", "color", "name", "status_effects", "element_resist")
+    __slots__ = ("position", "stats", "color", "name", "status_effects", "element_resist",
+                 "animator", "facing")
 
     def __init__(
         self,
@@ -37,6 +38,9 @@ class Entity:
         self.status_effects: StatusEffectContainer = StatusEffectContainer()
         # 元素抗性表：元素 → 倍率（1.0 正常 / 1.25 弱点 / 0.75 抗性）。默认无克制
         self.element_resist: dict[Element, float] = {}
+        # 动画：animator 由子类按素材构建；None 时走几何色块渲染
+        self.animator: "Animator | None" = None
+        self.facing: str = "down"  # up / down / left / right
 
     # ========== 网格坐标访问 ==========
 
@@ -67,17 +71,48 @@ class Entity:
         self.position.x += dx
         self.position.y += dy
 
+    # ========== 朝向与动画 ==========
+
+    def face(self, dx: int, dy: int) -> None:
+        """根据移动输入更新朝向（单轴输入即可）。"""
+        if dy < 0:
+            self.facing = "up"
+        elif dy > 0:
+            self.facing = "down"
+        elif dx < 0:
+            self.facing = "left"
+        elif dx > 0:
+            self.facing = "right"
+
+    def play_anim(self, state: str, restart: bool = False) -> None:
+        """
+        播放动画。优先尝试带朝向的状态名（attack_down），
+        不存在则回退无朝向名（attack，敌人素材）。
+        """
+        if self.animator is None:
+            return
+        directed = f"{state}_{self.facing}"
+        if self.animator.has(directed):
+            self.animator.play(directed, restart)
+        else:
+            self.animator.play(state, restart)
+
     # ========== 绘制 ==========
 
     def render(self, screen: pygame.Surface, cam_x: float, cam_y: float) -> None:
         """
-        在屏幕上绘制实体。默认实现：在瓦片中心画一个略小的矩形。
-        子类可覆盖此方法实现精灵/动画。
+        在屏幕上绘制实体。有动画时绘制当前帧（已缩放至瓦片尺寸），
+        否则退回默认色块。
         """
         ts = config.TILE_SIZE
         sx = int((self.position.x - cam_x) * ts)
         sy = int((self.position.y - cam_y) * ts)
-        # 略小于瓦片，留 4px 边距，看起来不顶满
+        if self.animator is not None:
+            frame = self.animator.surface
+            if frame is not None:
+                screen.blit(frame, (sx, sy))
+                return
+        # 几何色块渲染（无素材时的回退）：略小于瓦片，留边距
         inset = 4
         rect = pygame.Rect(
             sx + inset,

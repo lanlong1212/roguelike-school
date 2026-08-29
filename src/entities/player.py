@@ -198,6 +198,26 @@ class Player(Entity):
         self.gold: int = config.START_GOLD
         # 已学天赋 id 列表（被动天赋，学习即生效）
         self.talents: list[str] = []
+        # 动画：idle/walk/attack × 4 朝向（目录帧序列，缺素材自动跳过）
+        self._build_animator()
+
+    def _build_animator(self) -> None:
+        """从 assets/images/entities/player/ 构建四向动画状态机。"""
+        from src.core.asset_manager import assets
+        from src.entities.animation import Animator
+
+        anim = Animator()
+        for state, fps in (("idle", 5), ("walk", 10), ("attack", 14)):
+            for d in ("down", "up", "left", "right"):
+                anim.add(
+                    f"{state}_{d}",
+                    assets.get_frames(f"entities/player/{state}/{d}"),
+                    fps,
+                    loop=(state != "attack"),
+                    on_finish=f"idle_{d}" if state == "attack" else None,
+                )
+        anim.play("idle_down")
+        self.animator = anim
 
     # ========== 技能学习接口 ==========
 
