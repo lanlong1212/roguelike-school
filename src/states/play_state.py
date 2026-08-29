@@ -45,6 +45,7 @@ _TILE_COLORS: dict[TileType, tuple[int, int, int]] = {
 
 _ROOM_TYPE_LABEL: dict[RoomType, tuple[str, tuple[int, int, int]]] = {
     RoomType.BATTLE: ("战", config.COLOR_ENEMY),
+    RoomType.ELITE:  ("精", config.COLOR_ELITE),
     RoomType.BOSS:   ("王", config.COLOR_BOSS),
     RoomType.SHOP:   ("商", (230, 210, 60)),
     RoomType.REST:   ("休", (120, 220, 120)),
@@ -362,7 +363,7 @@ class PlayState(BaseState):
             if room.contains(gx, gy):
                 self._current_room = room
                 # 进入战斗房且未触发过 → 开战（已清空房间见 _cleared_room_positions，不重复触发）
-                if room.room_type in (RoomType.BATTLE, RoomType.BOSS):
+                if room.room_type in (RoomType.BATTLE, RoomType.ELITE, RoomType.BOSS):
                     center = room.center()
                     if (
                         id(room) not in self._battles_triggered
@@ -467,9 +468,10 @@ class PlayState(BaseState):
     def _start_battle(self, room: Room) -> None:
         """触发一场战斗：生成敌人 + 创建 BattleManager + 计算高亮。"""
         assert self.player and self.floor
-        # Day 7：Boss 房生成 Boss；战斗房生成 Slime/Skeleton
+        # Day 7：Boss 房生成 Boss；战斗房生成 Slime/Skeleton；精英房生成 1 精英
         from src.entities.enemies.slime import Slime
         from src.entities.enemies.skeleton import Skeleton
+        from src.entities.enemies.elite import Elite
         from src.entities.enemies.boss import Boss
 
         # 多楼层难度缩放：每层敌人 HP/ATK ×(1 + (level-1)*0.2)
@@ -487,6 +489,14 @@ class PlayState(BaseState):
             bc = room.center()
             boss = Boss(position=Vector2(int(bc.x), int(bc.y)))
             enemies.append(_scaled(boss))
+        elif room.room_type == RoomType.ELITE:
+            # 精英房：1 精英（+ 随从骷髅，组成守卫战）
+            ec = room.center()
+            elite = Elite(position=Vector2(int(ec.x), int(ec.y)))
+            enemies.append(_scaled(elite))
+            side = Skeleton(position=Vector2(int(ec.x) + 2, int(ec.y)))
+            if not (int(ec.x) + 2, int(ec.y)) == self.player.grid_pos:
+                enemies.append(_scaled(side))
         else:
             num = 2 if room.room_type == RoomType.BATTLE else 1
             corners = [
@@ -746,6 +756,8 @@ class PlayState(BaseState):
         if victory and self._last_room:
             if self._last_room.room_type == RoomType.BOSS:
                 loot_desc = self._drop_boss_loot()
+            elif self._last_room.room_type == RoomType.ELITE:
+                loot_desc = self._drop_elite_loot()
             elif self._last_room.room_type == RoomType.BATTLE:
                 loot_desc = self._drop_battle_loot()
         # 清理战斗状态
@@ -783,6 +795,22 @@ class PlayState(BaseState):
             return "获得：铁剑"
         else:
             return "战斗胜利！"
+
+    def _drop_elite_loot(self) -> str:
+        """精英掉落：30% 长弓，40% 铁剑，30% 力量药水。返回掉落描述。"""
+        import random
+        from src.items.potion import StrengthPotion
+        from src.items.weapon import create_iron_sword, create_long_bow
+        roll = random.random()
+        if roll < 0.3:
+            self.player.inventory.add(create_long_bow())
+            return "获得：长弓"
+        elif roll < 0.7:
+            self.player.inventory.add(create_iron_sword())
+            return "获得：铁剑"
+        else:
+            self.player.inventory.add(StrengthPotion())
+            return "获得：力量药水"
 
     # ========== 相机 ==========
 

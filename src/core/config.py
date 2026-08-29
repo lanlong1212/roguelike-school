@@ -28,6 +28,7 @@ MOVE_RANGE = 3               # 每回合移动格数上限
 START_GOLD = 30              # 玩家初始金币
 GOLD_SLIME = 3               # 史莱姆掉落金币
 GOLD_SKELETON = 5            # 骷髅掉落金币
+GOLD_ELITE = 10              # 精英掉落金币
 GOLD_BOSS = 20               # Boss 掉落金币
 # 商店商品价格
 SHOP_PRICE_IRON_SWORD = 20
@@ -51,6 +52,7 @@ COLOR_STAIR = (255, 235, 120)  # 下行阶梯
 # ========== 实体颜色 ==========
 COLOR_PLAYER = (80, 180, 255)   # 玩家
 COLOR_ENEMY = (220, 80, 80)     # 普通敌人
+COLOR_ELITE = (255, 140, 40)    # 精英敌人
 COLOR_BOSS = (180, 40, 220)     # Boss
 
 # ========== 战斗网格高亮颜色 (R, G, B, A) ==========

@@ -18,12 +18,12 @@ from src.world.room import Room, RoomType
 from src.world.tilemap import TileMap
 
 
-# 每层房间类型配额：1 BOSS, 1 SHOP, 1 REST, 3 BATTLE
+# 每层房间类型配额：1 BOSS, 1 SHOP, 1 REST, 1 ELITE, 2 BATTLE（共 6 个）
 _ROOM_TYPE_QUOTA = [
     RoomType.BOSS,
     RoomType.SHOP,
     RoomType.REST,
-    RoomType.BATTLE,
+    RoomType.ELITE,
     RoomType.BATTLE,
     RoomType.BATTLE,
 ]
@@ -99,7 +99,9 @@ class Floor:
         为房间列表分配 6 个类型：
           - 距离出生候选点最远的 = BOSS
           - 最近的 = REST（玩家休息恢复点）
-          - 中间距离的按 SHOP + 3BATTLE 分配
+          - 第二近的 = SHOP
+          - 剩余房间中较远的 1 个 = ELITE（守卫在 Boss 之前）
+          - 其余 = BATTLE
         """
         if not self.rooms:
             return
@@ -118,10 +120,13 @@ class Floor:
         # 第二近 = SHOP
         if len(rooms_sorted) >= 2:
             rooms_sorted[1].room_type = RoomType.SHOP
-        # 其余 = BATTLE
-        for r in rooms_sorted[2:-1]:
-            r.room_type = RoomType.BATTLE
-        # 如果房间数刚好 6，这步会剩 3 个 BATTLE，与配额一致
+        # 剩余房间：较远的一个 = ELITE，其余 = BATTLE
+        remaining = rooms_sorted[2:-1]  # 剔除 BOSS 后，剩余中间房间
+        if remaining:
+            remaining[-1].room_type = RoomType.ELITE
+            for r in remaining[:-1]:
+                r.room_type = RoomType.BATTLE
+        # 如果房间数刚好 6，这步会剩 1 ELITE + 2 BATTLE，与配额一致
         # 如果因生成异常房间<6，多余的类型位不报错
 
     def _pick_spawn(self) -> Vector2:

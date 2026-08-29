@@ -13,9 +13,10 @@ from src.utils.vector import Vector2
 
 
 class RoomType(Enum):
-    """房间类型枚举。BOSS/REST/SHOP/BATTLE 共四种。"""
+    """房间类型枚举。BOSS/ELITE/REST/SHOP/BATTLE 共五种。"""
     START = auto()   # 玩家出生房（内部使用，不标注给玩家）
     BATTLE = auto()  # 战斗房
+    ELITE = auto()   # 精英房（1 精英守卫，可召唤小怪）
     BOSS = auto()    # Boss 房
     SHOP = auto()    # 商店房
     REST = auto()    # 休息房
