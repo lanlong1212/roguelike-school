@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pygame
 
+from src.combat.element import Element
 from src.combat.status_effect import StatusEffectContainer
 from src.core import config
 from src.entities.stats import Stats
@@ -19,7 +20,7 @@ from src.utils.vector import Vector2
 class Entity:
     """实体基类。坐标用 Vector2（浮点），网格运算时取整。"""
 
-    __slots__ = ("position", "stats", "color", "name", "status_effects")
+    __slots__ = ("position", "stats", "color", "name", "status_effects", "element_resist")
 
     def __init__(
         self,
@@ -34,6 +35,8 @@ class Entity:
         self.name: str = name
         # Day 5：状态效果容器
         self.status_effects: StatusEffectContainer = StatusEffectContainer()
+        # 元素抗性表：元素 → 倍率（1.0 正常 / 1.25 弱点 / 0.75 抗性）。默认无克制
+        self.element_resist: dict[Element, float] = {}
 
     # ========== 网格坐标访问 ==========
 

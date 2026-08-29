@@ -18,6 +18,8 @@ import pygame
 
 from src.combat.action import AttackAction, EndTurnAction, MoveAction, SkillAction
 from src.combat.battle_manager import BattleManager, TurnPhase
+from src.combat.element import ELEMENT_COLOR, ELEMENT_NAME, REACTION_NAME, Element
+from src.combat.status_effect import EFFECT_DISPLAY_NAME
 from src.core import config
 from src.core import save_manager
 from src.entities.enemy import Enemy
@@ -228,17 +230,14 @@ class PlayState(BaseState):
                     if self.battle and self.battle.is_player_turn:
                         self.battle.end_player_turn()
                         self._after_player_action()
-                # 数字键 1/2/3 切换技能
-                elif event.key == pygame.K_1:
-                    self._selected_skill_index = 0
-                    self._compute_battle_highlights()
-                elif event.key == pygame.K_2:
-                    if len(self.player.skills) > 1:
-                        self._selected_skill_index = 1
-                        self._compute_battle_highlights()
-                elif event.key == pygame.K_3:
-                    if len(self.player.skills) > 2:
-                        self._selected_skill_index = 2
+                # 数字键 1-6 切换技能（6 个技能：2 物理 + 4 元素）
+                elif event.key in (
+                    pygame.K_1, pygame.K_2, pygame.K_3,
+                    pygame.K_4, pygame.K_5, pygame.K_6,
+                ):
+                    idx = int(pygame.key.name(event.key)) - 1
+                    if idx < len(self.player.skills):
+                        self._selected_skill_index = idx
                         self._compute_battle_highlights()
                 # M 键切回移动模式（不消耗 AP 选择）
                 elif event.key == pygame.K_m:
@@ -272,6 +271,11 @@ class PlayState(BaseState):
                 # 敌人攻击后生成飘字（敌人攻击玩家时）
                 self._spawn_enemy_damage_floating_text()
                 self._after_enemy_turn()
+
+        # 状态处理日志显示（冻结/眩晕等）
+        if self.battle and self.battle.last_status_logs:
+            self._last_loot_desc = "；".join(self.battle.last_status_logs)
+            self.battle.last_status_logs = []
 
         # Day 8：更新 HUD
         self.hud.update(
@@ -536,7 +540,7 @@ class PlayState(BaseState):
             skills = self.player.skills
             if 0 <= self._selected_skill_index < len(skills):
                 skill = skills[self._selected_skill_index]
-                # Day 5 统一走 SkillAction（含基础攻击 1.0×）
+                # Day 5 统一走 SkillAction（含基础攻击 1.0×），元素系统传入技能元素
                 action = SkillAction(
                     actor=self.player,
                     target=target,
@@ -544,6 +548,7 @@ class PlayState(BaseState):
                     multiplier=skill.multiplier,
                     ap_cost=skill.ap_cost,
                     skill_name=skill.name,
+                    element=skill.element,
                 )
                 if self.battle.execute_action(action):
                     self._spawn_damage_floating_text()
@@ -558,24 +563,30 @@ class PlayState(BaseState):
             return
 
     def _spawn_damage_floating_text(self) -> None:
-        """根据 battle.last_damage_result 生成飘字。"""
+        """根据 battle.last_damage_result 生成飘字（含元素着色与反应提示）。"""
         assert self.battle
         result = self.battle.last_damage_result
         target = self.battle.last_damage_target
         if result is None or target is None:
             return
-        # 飘字文本：暴击加感叹号
-        text = f"-{result.damage}"
-        if result.is_crit:
-            text = f"-{result.damage}!"
-            color = (255, 220, 80)  # 暴击黄色
-        else:
-            color = (255, 80, 80)   # 普通红色
-        # 屏幕坐标：目标头顶
         ts = config.TILE_SIZE
         sx = (target.position.x - self.camera.x) * ts + ts // 4
         sy = (target.position.y - self.camera.y) * ts - 4
+        # 飘字文本：暴击加感叹号
+        text = f"-{result.damage}" + ("!" if result.is_crit else "")
+        # 颜色：元素技能用元素色，否则按暴击/普通
+        if result.element is not Element.NONE:
+            color = ELEMENT_COLOR[result.element]
+        elif result.is_crit:
+            color = (255, 220, 80)  # 暴击黄色
+        else:
+            color = (255, 80, 80)   # 普通红色
         self._floating_texts.append(FloatingText(text, sx, sy, color))
+        # 元素反应：飘白色大字
+        if result.reaction is not None:
+            self._floating_texts.append(
+                FloatingText(f"{REACTION_NAME[result.reaction]}!", sx, sy - 16, (255, 255, 255))
+            )
         # 清除一次性标记，避免重复生成
         self.battle.last_damage_result = None
         self.battle.last_damage_target = None
@@ -792,6 +803,7 @@ class PlayState(BaseState):
             for enemy in self.battle.enemies:
                 if not enemy.stats.is_dead():
                     enemy.render(screen, cam_x, cam_y)
+                    self._draw_enemy_overhead(screen, enemy, cam_x, cam_y)
 
         # ---------- 第六层：玩家 ----------
         self.player.render(screen, cam_x, cam_y)
@@ -857,15 +869,31 @@ class PlayState(BaseState):
         self._fog_surfaces[key] = surf
         return surf
 
+    def _draw_enemy_overhead(self, screen, enemy, cam_x: float, cam_y: float) -> None:
+        """敌人头顶标记：附着元素外圈描边 + 状态效果小字。"""
+        ts = config.TILE_SIZE
+        sx = int((enemy.position.x - cam_x) * ts)
+        sy = int((enemy.position.y - cam_y) * ts)
+        # 附着元素：瓦片外圈按元素着色
+        aura = enemy.status_effects.aura
+        if aura is not None and aura is not Element.NONE:
+            pygame.draw.rect(screen, ELEMENT_COLOR[aura], (sx, sy, ts, ts), 3)
+        # 状态效果：敌人头顶小字
+        effects = enemy.status_effects.all
+        if effects:
+            labels = [EFFECT_DISPLAY_NAME[e.effect_type] for e in effects]
+            text_surf = self.game.font.render(" ".join(labels), True, (255, 255, 255))
+            screen.blit(text_surf, (sx + ts // 2 - text_surf.get_width() // 2, sy - 14))
+
     def _draw_skill_bar(self, screen) -> None:
-        """绘制技能选择栏（数字键 1/2/3 切换）。"""
+        """绘制技能选择栏（数字键 1-6 切换）。"""
         assert self.player
         skills = self.player.skills
         bar_y = 88  # Day 8：避开 HUD 的 HP/AP 条（8~76 像素）
         bar_x = 10
-        slot_w = 200
+        slot_w = 190
         slot_h = 32
-        gap = 8
+        gap = 6
         for i, skill in enumerate(skills):
             rect = pygame.Rect(bar_x + i * (slot_w + gap), bar_y, slot_w, slot_h)
             # 选中态高亮
@@ -874,9 +902,11 @@ class PlayState(BaseState):
             pygame.draw.rect(screen, bg, rect, border_radius=4)
             border_color = config.COLOR_TEXT_HIGHLIGHT if is_selected else config.GRAY
             pygame.draw.rect(screen, border_color, rect, 2, border_radius=4)
-            # 技能文本
-            txt = f"[{i+1}] {skill.name} {skill.ap_cost}AP {skill.multiplier}×"
-            text_surf = self.game.font.render(txt, True, config.COLOR_TEXT)
+            # 技能文本（元素技能按元素色）
+            element_tag = "" if skill.element is Element.NONE else f"【{ELEMENT_NAME[skill.element]}】"
+            txt = f"[{i+1}] {element_tag}{skill.name} {skill.ap_cost}AP {skill.multiplier}×"
+            text_color = ELEMENT_COLOR[skill.element] if skill.element is not Element.NONE else config.COLOR_TEXT
+            text_surf = self.game.font.render(txt, True, text_color)
             screen.blit(text_surf, (rect.x + 6, rect.y + 6))
             # AP 不足时灰显
             if self.player.stats.ap < skill.ap_cost:

@@ -36,3 +36,9 @@ class Skeleton(Enemy):
         from src.ai.behaviors.basic_enemy_ai import create_ranged_ai
         self.set_behavior_tree(create_ranged_ai())
         self.gold_reward = config.GOLD_SKELETON
+        # 元素抗性：弱冰 / 抗火
+        from src.combat.element import Element
+        self.element_resist = {
+            Element.ICE: 1.25,
+            Element.FIRE: 0.75,
+        }

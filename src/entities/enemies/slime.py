@@ -36,3 +36,9 @@ class Slime(Enemy):
         from src.ai.behaviors.basic_enemy_ai import create_melee_ai
         self.set_behavior_tree(create_melee_ai())
         self.gold_reward = config.GOLD_SLIME
+        # 元素抗性：弱雷 / 抗冰
+        from src.combat.element import Element
+        self.element_resist = {
+            Element.LIGHTNING: 1.25,
+            Element.ICE: 0.75,
+        }

@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from src.combat.damage import apply_damage
+from src.combat.element import ELEMENT_NAME, REACTION_NAME, Element
 from src.utils.vector import Vector2
 
 if TYPE_CHECKING:
@@ -64,20 +65,23 @@ class AttackAction(Action):
         ap_cost: int = 2,
         multiplier: float = 1.0,
         skill_name: str = "攻击",
+        element: Element = Element.NONE,
     ):
         super().__init__(actor, ap_cost)
         self.target = target
         self.multiplier = multiplier
         self.skill_name = skill_name
+        self.element = element
 
     def execute(self, manager: "BattleManager") -> None:
-        # 计算伤害并扣血
-        result = apply_damage(self.actor, self.target, self.multiplier)
-        # 暴击描述
+        # 计算伤害并扣血（含元素附着/反应/护盾）
+        result = apply_damage(self.actor, self.target, self.multiplier, self.element)
+        # 暴击/元素/反应描述
         crit_str = " 暴击!" if result.is_crit else ""
+        reaction_str = f" 触发{REACTION_NAME[result.reaction]}!" if result.reaction else ""
         manager.last_action_desc = (
             f"{self.actor.name} 使用 {self.skill_name} → "
-            f"{self.target.name} -{result.damage} HP{crit_str}"
+            f"{self.target.name} -{result.damage} HP{crit_str}{reaction_str}"
         )
         # 暴露给 UI 用于飘字
         manager.last_damage_result = result
@@ -100,23 +104,26 @@ class SkillAction(Action):
         multiplier: float,
         ap_cost: int = 3,
         skill_name: str = "技能",
+        element: Element = Element.NONE,
     ):
         super().__init__(actor, ap_cost)
         self.target = target
         self.skill_id = skill_id
         self.multiplier = multiplier
         self.skill_name = skill_name
+        self.element = element
 
     def execute(self, manager: "BattleManager") -> None:
         if self.target is None:
             manager.last_action_desc = f"{self.actor.name} 释放 {self.skill_name}（无目标）"
             return
-        # 与 AttackAction 共用伤害逻辑
-        result = apply_damage(self.actor, self.target, self.multiplier)
+        # 与 AttackAction 共用伤害逻辑（含元素附着/反应/护盾）
+        result = apply_damage(self.actor, self.target, self.multiplier, self.element)
         crit_str = " 暴击!" if result.is_crit else ""
+        reaction_str = f" 触发{REACTION_NAME[result.reaction]}!" if result.reaction else ""
         manager.last_action_desc = (
             f"{self.actor.name} 释放 {self.skill_name} → "
-            f"{self.target.name} -{result.damage} HP{crit_str}"
+            f"{self.target.name} -{result.damage} HP{crit_str}{reaction_str}"
         )
         manager.last_damage_result = result
         manager.last_damage_target = self.target

@@ -6,15 +6,23 @@ Day 5 扩展：
     - 技能数据类 Skill 含 id/name/ap_cost/range/multiplier/desc
     - 提供 get_skill(id) 与默认技能配置
 
-技能配置（PRD 第 4.4 节）：
-    basic_attack  基础攻击  2 AP  相邻 8 格  1.0×
-    charge_slash  冲锋斩    3 AP  相邻 8 格  1.8×
-    fireball      火球术    3 AP  5 格直线  2.0×（Day 5 简化为远程单体）
+元素系统扩展：
+    - Skill 增加 element 字段（物理/火/水/冰/雷）
+    - 新增寒冰箭/水弹/雷击，凑齐 4 种元素技能用于元素反应
+
+技能配置：
+    basic_attack  基础攻击  2 AP  相邻 1 格  1.0×  物理
+    charge_slash  冲锋斩    3 AP  相邻 1 格  1.8×  物理
+    fireball      火球术    3 AP  5 格      1.8×  火
+    ice_arrow     寒冰箭    3 AP  4 格      1.6×  冰
+    water_shot    水弹      2 AP  3 格      1.2×  水
+    lightning     雷击      3 AP  4 格      1.7×  雷
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from src.combat.element import Element
 from src.core import config
 from src.entities.entity import Entity
 from src.entities.stats import Stats
@@ -32,6 +40,7 @@ class Skill:
     range_cells: int   # 攻击距离（格）
     multiplier: float  # 伤害倍率
     desc: str           # 技能描述
+    element: Element = Element.NONE  # 技能元素（命中附着，触发反应）
 
 
 # 玩家默认技能列表
@@ -42,7 +51,7 @@ _DEFAULT_SKILLS: list[Skill] = [
         ap_cost=2,
         range_cells=1,
         multiplier=1.0,
-        desc="对相邻敌人造成 ATK×1.0 伤害",
+        desc="对相邻敌人造成 ATK×1.0 物理伤害",
     ),
     Skill(
         id="charge_slash",
@@ -50,15 +59,43 @@ _DEFAULT_SKILLS: list[Skill] = [
         ap_cost=3,
         range_cells=1,
         multiplier=1.8,
-        desc="对相邻敌人造成 ATK×1.8 伤害",
+        desc="对相邻敌人造成 ATK×1.8 物理伤害",
     ),
     Skill(
         id="fireball",
         name="火球术",
         ap_cost=3,
         range_cells=5,
-        multiplier=2.0,
-        desc="对 5 格内单体造成 ATK×2.0 伤害",
+        multiplier=1.8,
+        desc="对 5 格内单体造成 ATK×1.8 火伤，附着火元素",
+        element=Element.FIRE,
+    ),
+    Skill(
+        id="ice_arrow",
+        name="寒冰箭",
+        ap_cost=3,
+        range_cells=4,
+        multiplier=1.6,
+        desc="对 4 格内单体造成 ATK×1.6 冰伤，附着冰元素",
+        element=Element.ICE,
+    ),
+    Skill(
+        id="water_shot",
+        name="水弹",
+        ap_cost=2,
+        range_cells=3,
+        multiplier=1.2,
+        desc="对 3 格内单体造成 ATK×1.2 水伤，附着水元素",
+        element=Element.WATER,
+    ),
+    Skill(
+        id="lightning",
+        name="雷击",
+        ap_cost=3,
+        range_cells=4,
+        multiplier=1.7,
+        desc="对 4 格内单体造成 ATK×1.7 雷伤，附着雷元素",
+        element=Element.LIGHTNING,
     ),
 ]
 

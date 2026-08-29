@@ -44,6 +44,13 @@ class Boss(Enemy):
         # 初始化为阶段 1
         self._phase = 1
         self.gold_reward = config.GOLD_BOSS
+        # 元素抗性：弱雷 / 抗火、抗冰
+        from src.combat.element import Element
+        self.element_resist = {
+            Element.LIGHTNING: 1.25,
+            Element.FIRE: 0.75,
+            Element.ICE: 0.75,
+        }
         self._phase1_tree: BehaviorTree = create_phase1_tree()
         self._phase2_tree: BehaviorTree = create_phase2_tree()
         self._phase3_tree: BehaviorTree = create_phase3_tree()

@@ -52,6 +52,8 @@ class BattleManager:
 
         # 最近一次行动描述（供 HUD 显示反馈）
         self.last_action_desc: str = ""
+        # 最近一次状态处理日志（回合开始/结束产生，供 HUD 显示）
+        self.last_status_logs: list[str] = []
         # Day 5：最近一次伤害结果与目标（供 UI 生成飘字）
         self.last_damage_result = None
         self.last_damage_target = None
@@ -59,8 +61,11 @@ class BattleManager:
     # ========== 玩家行动接口 ==========
 
     def can_execute(self, action: Action) -> bool:
-        """检查当前能否执行行动：玩家回合 + AP 足够。"""
+        """检查当前能否执行行动：玩家回合 + AP 足够 + 未被冻结/眩晕。"""
         if self.phase != TurnPhase.PLAYER_TURN:
+            return False
+        # 冻结/眩晕：本回合不能行动（结束回合除外）
+        if self.player.status_effects.is_disabled() and not isinstance(action, EndTurnAction):
             return False
         return self.player.stats.ap >= action.ap_cost
 
@@ -82,8 +87,9 @@ class BattleManager:
             self.phase = TurnPhase.BATTLE_WON
             return True
 
-        # AP 归零或玩家主动结束回合 → 切到敌人回合
+        # AP 归零或玩家主动结束回合 → 切到敌人回合（先处理玩家回合结束状态）
         if isinstance(action, EndTurnAction) or self.player.stats.ap <= 0:
+            self.player.status_effects.on_turn_end(self.player)
             self._start_enemy_turn()
 
         return True
@@ -110,12 +116,18 @@ class BattleManager:
     # ========== 敌人回合（Day 6 接入 AI） ==========
 
     def _start_enemy_turn(self) -> None:
-        """切换到敌人回合。"""
+        """切换到敌人回合：重置 AP、附着计时、处理敌人回合开始状态。"""
         self.phase = TurnPhase.ENEMY_TURN
         self.current_enemy_index = 0
-        # 重置所有敌人 AP（Day 6 AI 用）
         for enemy in self.enemies:
+            if enemy.stats.is_dead():
+                continue
             enemy.stats.reset_ap()
+            # 附着持续计时 + 回合开始状态处理
+            enemy.status_effects.tick_aura()
+            logs = enemy.status_effects.on_turn_start(enemy)
+            if logs:
+                self.last_status_logs += logs
 
     def step_enemy_turn(self) -> None:
         """
@@ -123,14 +135,18 @@ class BattleManager:
         敌人 AP 归零或行为树返回 FAILURE 后轮到下一个敌人，
         全部敌人行动完毕则切回玩家回合。
         """
-        # 过滤掉已死亡的敌人
+        # 过滤掉已死亡/被冻结眩晕的敌人
         while self.current_enemy_index < len(self.enemies):
             enemy = self.enemies[self.current_enemy_index]
             if enemy.stats.is_dead():
                 self.current_enemy_index += 1
                 continue
-            # AP 不足（< 1）或无行为树 → 轮到下一个
-            if enemy.stats.ap < 1 or enemy.behavior_tree is None:
+            # AP 不足（< 1）或无行为树或冻结/眩晕 → 轮到下一个
+            if (
+                enemy.stats.ap < 1
+                or enemy.behavior_tree is None
+                or enemy.status_effects.is_disabled()
+            ):
                 self.current_enemy_index += 1
                 continue
             # 执行一次 AI tick
@@ -149,9 +165,17 @@ class BattleManager:
         self._start_player_turn()
 
     def _start_player_turn(self) -> None:
-        """切换到玩家回合：重置 AP、回合计数 +1。"""
+        """切换到玩家回合：敌人状态结算、重置 AP、回合计数 +1。"""
         self.phase = TurnPhase.PLAYER_TURN
         self.turn_count += 1
+        # 敌人回合结束：敌人状态时长 -1（冻结/感电/破甲等）
+        for enemy in self.enemies:
+            if not enemy.stats.is_dead():
+                enemy.status_effects.on_turn_end(enemy)
+        # 玩家回合开始：附着计时 + 状态处理
+        self.player.status_effects.tick_aura()
+        logs = self.player.status_effects.on_turn_start(self.player)
+        self.last_status_logs = logs
         self.player.stats.reset_ap()
 
     # ========== 胜负判定 ==========

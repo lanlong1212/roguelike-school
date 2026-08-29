@@ -26,7 +26,7 @@ class HUD:
     def __init__(self):
         # 左上角面板：玩家状态
         self.status_panel = Panel(
-            pygame.Rect(8, 8, 200, 70),
+            pygame.Rect(8, 8, 200, 96),
             color=(15, 15, 25),
             border_color=(80, 80, 100),
         )
@@ -39,6 +39,13 @@ class HUD:
             pygame.Rect(14, 44, 188, 22),
             current=5, maximum=5,
             color=(60, 120, 220), label="AP",
+        )
+        # 玩家状态效果（元素系统：冻结/感电/破甲等）
+        self.status_text = Text(
+            pygame.Rect(14, 70, 188, 24),
+            "",
+            color=(255, 220, 120),
+            center=False,
         )
 
         # 右上角：楼层/回合
@@ -67,6 +74,14 @@ class HUD:
         self.hp_bar.set_value(player.stats.hp, player.stats.max_hp)
         # AP 条
         self.ap_bar.set_value(player.stats.ap, player.stats.max_ap)
+        # 玩家状态效果
+        effects = player.status_effects.all
+        if effects:
+            from src.combat.status_effect import EFFECT_DISPLAY_NAME
+            labels = [EFFECT_DISPLAY_NAME[e.effect_type] for e in effects]
+            self.status_text.set_text("状态: " + " ".join(labels))
+        else:
+            self.status_text.set_text("")
         # 楼层/回合
         level = getattr(floor, "level", getattr(floor, "current_level", 1))
         if battle is not None:
@@ -91,6 +106,7 @@ class HUD:
         self.status_panel.draw(screen, font)
         self.hp_bar.draw(screen, font)
         self.ap_bar.draw(screen, font)
+        self.status_text.draw(screen, font)
         self.info_panel.draw(screen, font)
         self.info_text.draw(screen, font)
         self.tip_text.draw(screen, font)
