@@ -35,3 +35,4 @@ class Slime(Enemy):
         # 注入近战 AI
         from src.ai.behaviors.basic_enemy_ai import create_melee_ai
         self.set_behavior_tree(create_melee_ai())
+        self.gold_reward = config.GOLD_SLIME

@@ -24,6 +24,17 @@ MAX_FLOOR_LEVEL = 3          # 游戏最大楼层数（达到后击败 Boss 即�
 AP_MAX = 5                   # 每回合行动点上限
 MOVE_RANGE = 3               # 每回合移动格数上限
 
+# ========== 经济系统 ==========
+START_GOLD = 30              # 玩家初始金币
+GOLD_SLIME = 3               # 史莱姆掉落金币
+GOLD_SKELETON = 5            # 骷髅掉落金币
+GOLD_BOSS = 20               # Boss 掉落金币
+# 商店商品价格
+SHOP_PRICE_IRON_SWORD = 20
+SHOP_PRICE_LONG_BOW = 35
+SHOP_PRICE_HEALTH_POTION = 10
+SHOP_PRICE_STRENGTH_POTION = 25
+
 # ========== 基础颜色 (R, G, B) ==========
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)

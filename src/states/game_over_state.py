@@ -54,6 +54,7 @@ class GameOverState(BaseState):
             f"击杀数: {self.stats.get('kills', 0)}",
             f"到达楼层: {self.stats.get('floor', 1)}",
             f"用时: {self.stats.get('time', '00:00')}",
+            f"本局金币: {self.stats.get('gold', 0)}",
         ]
         loot = self.stats.get("loot", [])
         if loot:

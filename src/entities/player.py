@@ -86,6 +86,8 @@ class Player(Entity):
         self.selected_skill: Skill | None = None
         # Day 7：背包系统
         self.inventory: Inventory = Inventory(self)
+        # 本局货币（商店购买用，初始 START_GOLD）
+        self.gold: int = config.START_GOLD
 
     # ========== 技能接口 ==========
 

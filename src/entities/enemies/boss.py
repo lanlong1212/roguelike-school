@@ -43,6 +43,7 @@ class Boss(Enemy):
         )
         # 初始化为阶段 1
         self._phase = 1
+        self.gold_reward = config.GOLD_BOSS
         self._phase1_tree: BehaviorTree = create_phase1_tree()
         self._phase2_tree: BehaviorTree = create_phase2_tree()
         self._phase3_tree: BehaviorTree = create_phase3_tree()

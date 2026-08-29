@@ -35,3 +35,4 @@ class Skeleton(Enemy):
         # 注入远程 AI
         from src.ai.behaviors.basic_enemy_ai import create_ranged_ai
         self.set_behavior_tree(create_ranged_ai())
+        self.gold_reward = config.GOLD_SKELETON

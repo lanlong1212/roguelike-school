@@ -48,6 +48,8 @@ class Enemy(Entity):
         super().__init__(position=position, stats=stats, color=color, name=name)
         # 行为树引用，Day 6 注入
         self.behavior_tree: "BehaviorTree | None" = None
+        # 击杀掉落金币（商店经济系统，子类覆盖）
+        self.gold_reward: int = 0
 
     # ========== AI 接口（Day 6 实现） ==========
 

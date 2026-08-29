@@ -176,3 +176,104 @@ class InventoryMenu:
                     self.on_use_item(i)
                 return True
         return False
+
+
+class ShopMenu:
+    """神秘商人商店界面。
+
+    显示玩家金币余额与商品列表（名称/描述/价格），点击商品购买。
+    stock 为 [(Item, price), ...] 列表，sold 记录已售罄的商品下标。
+    on_buy(index) 由调用方注入，负责扣金币、加背包并标记已售。
+    """
+
+    def __init__(self, player, stock: list, on_buy=None, on_close=None):
+        self.player = player
+        self.stock = stock  # list[tuple[Item, int]]（物品, 价格）
+        self.sold: set[int] = set()  # 已售罄商品下标
+        self.on_buy = on_buy
+        self.on_close = on_close
+        sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
+        # 面板
+        panel_w, panel_h = 480, 460
+        panel_x = (sw - panel_w) // 2
+        panel_y = (sh - panel_h) // 2
+        self.panel = Panel(pygame.Rect(panel_x, panel_y, panel_w, panel_h))
+        self.title = Text(
+            pygame.Rect(panel_x, panel_y + 10, panel_w, 32),
+            "神秘商店", color=(230, 210, 60),
+        )
+        self.btn_close = Button(
+            pygame.Rect(panel_x + panel_w - 100, panel_y + 10, 80, 28),
+            "离开", on_click=None, color=(80, 30, 30),
+        )
+        # 商品行（名称/描述/价格按钮）
+        self.item_rects: list[pygame.Rect] = []
+        row_w = panel_w - 40
+        for i in range(len(self.stock)):
+            row_y = panel_y + 70 + i * 82
+            self.item_rects.append(pygame.Rect(panel_x + 20, row_y, row_w, 70))
+
+    def is_sold(self, index: int) -> bool:
+        return index in self.sold
+
+    def mark_sold(self, index: int) -> None:
+        self.sold.add(index)
+
+    def update(self, dt: float) -> None:
+        self.btn_close.update(dt)
+
+    def draw(self, screen, font) -> None:
+        # 半透明遮罩
+        overlay = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 170))
+        screen.blit(overlay, (0, 0))
+        # 面板
+        self.panel.draw(screen, font)
+        self.title.draw(screen, font)
+        self.btn_close.draw(screen, font)
+        # 金币余额
+        gold_text = font.render(f"金币: {self.player.gold}", True, (255, 220, 80))
+        screen.blit(gold_text, (self.panel.rect.x + 20, self.panel.rect.y + 44))
+
+        # 商品列表
+        for i, (item, price) in enumerate(self.stock):
+            rect = self.item_rects[i]
+            sold = i in self.sold
+            bg = (35, 35, 45) if not sold else (25, 25, 30)
+            pygame.draw.rect(screen, bg, rect, border_radius=4)
+            border = (110, 100, 60) if not sold else (60, 60, 60)
+            pygame.draw.rect(screen, border, rect, 1, border_radius=4)
+            # 名称（稀有度颜色）
+            name_color = self._rarity_color(item.rarity) if not sold else (90, 90, 90)
+            name_text = font.render(item.name, True, name_color)
+            screen.blit(name_text, (rect.x + 10, rect.y + 8))
+            # 描述
+            desc_text = font.render(item.description, True, (170, 170, 170))
+            screen.blit(desc_text, (rect.x + 10, rect.y + 32))
+            # 价格/售罄
+            if sold:
+                price_text = font.render("已售罄", True, (90, 90, 90))
+            else:
+                price_text = font.render(f"{price} 金币", True, (255, 220, 80))
+            screen.blit(price_text, (rect.x + rect.width - 90, rect.y + 24))
+
+    def _rarity_color(self, rarity) -> tuple[int, int, int]:
+        from src.items.item import Rarity
+        if rarity == Rarity.COMMON: return (220, 220, 220)
+        if rarity == Rarity.UNCOMMON: return (100, 220, 100)
+        if rarity == Rarity.RARE: return (100, 150, 255)
+        return (200, 100, 220)
+
+    def handle_click(self, pos: tuple[int, int]) -> bool:
+        # 关闭按钮
+        if self.btn_close.handle_click(pos):
+            if self.on_close:
+                self.on_close()
+            return True
+        # 商品购买
+        for i, rect in enumerate(self.item_rects):
+            if rect.collidepoint(pos):
+                if i not in self.sold and self.on_buy:
+                    self.on_buy(i)
+                return True
+        return False

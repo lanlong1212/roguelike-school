@@ -24,7 +24,7 @@ from src.entities.enemy import Enemy
 from src.entities.player import Player, Skill
 from src.states.base_state import BaseState
 from src.ui.hud import HUD
-from src.ui.menu import InventoryMenu
+from src.ui.menu import InventoryMenu, ShopMenu
 from src.utils.vector import Vector2
 from src.world.floor import Floor
 from src.world.fog_of_war import FogState
@@ -123,6 +123,10 @@ class PlayState(BaseState):
         self._last_loot_desc: str = ""
         # Day 9：测试模式（T 键切换，开局送全套物品用于测试装备系统）
         self._test_mode: bool = False
+        # 商店：当前打开的商店界面 / 各房间库存（按房间 id 保留已售状态）
+        self._shop_menu: ShopMenu | None = None
+        self._shop_stocks: dict[int, list] = {}
+        self._last_shop_room_id: int | None = None
 
     # ========== 生命周期 ==========
 
@@ -177,8 +181,11 @@ class PlayState(BaseState):
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
-            # ESC → Day 8：暂停（不再直接回主菜单）
+            # ESC → 商店开着则先关商店；否则 Day 8：暂停
             if event.key == pygame.K_ESCAPE:
+                if self._shop_menu is not None:
+                    self._shop_menu = None
+                    return
                 from src.states.pause_state import PauseState
                 self.game.push_state(PauseState(self.game, play_state=self))
                 return
@@ -196,6 +203,10 @@ class PlayState(BaseState):
 
             # 背包打开时只响应 I/Esc
             if self._inventory_menu is not None:
+                return
+
+            # 商店打开时只响应 Esc（已在上面处理）与鼠标点击
+            if self._shop_menu is not None:
                 return
 
             if self.mode == PlayMode.EXPLORE:
@@ -241,6 +252,10 @@ class PlayState(BaseState):
             # 背包打开时点击背包
             if self._inventory_menu is not None:
                 self._inventory_menu.handle_click(event.pos)
+                return
+            # 商店打开时点击商店
+            if self._shop_menu is not None:
+                self._shop_menu.handle_click(event.pos)
                 return
             if self.mode == PlayMode.BATTLE:
                 self._handle_battle_click(event.pos)
@@ -307,7 +322,11 @@ class PlayState(BaseState):
         self._attack_targets.clear()
         self._counted_kills.clear()
         self._cleared_room_positions.clear()  # 新楼层的房间状态重新记录
-        self._battles_triggered.clear()  
+        self._battles_triggered.clear()
+        # 新楼层：清空商店状态（房间是新对象，id 不复用）
+        self._shop_menu = None
+        self._shop_stocks.clear()
+        self._last_shop_room_id = None  
         self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
         self._update_camera()
         self._update_current_room()
@@ -318,7 +337,7 @@ class PlayState(BaseState):
         self._autosave()
 
     def _update_current_room(self) -> None:
-        """更新玩家当前所在房间，进入战斗房则触发战斗。"""
+        """更新玩家当前所在房间，进入战斗房则触发战斗，进入商店房则打开商店。"""
         assert self.player and self.floor
         gx, gy = self.player.grid_x, self.player.grid_y
         for room in self.floor.rooms:
@@ -333,8 +352,64 @@ class PlayState(BaseState):
                     ):
                         self._battles_triggered.add(id(room))
                         self._start_battle(room)
+                # 商店房：进入时打开商店（同房间内不重复打开，离开后重进会再打开）
+                elif room.room_type == RoomType.SHOP:
+                    if self._shop_menu is None and self._last_shop_room_id != id(room):
+                        self._open_shop(room)
                 return
         self._current_room = None
+        # 离开房间：允许下次进入商店时重新打开
+        self._last_shop_room_id = None
+
+    # ========== 商店 ==========
+
+    def _open_shop(self, room: Room) -> None:
+        """打开商店界面。库存按房间懒创建并保留已售状态。"""
+        stock = self._shop_stocks.get(id(room))
+        if stock is None:
+            stock = self._create_shop_stock()
+            self._shop_stocks[id(room)] = stock
+        self._last_shop_room_id = id(room)
+        self._shop_menu = ShopMenu(
+            self.player,
+            stock,
+            on_buy=self._buy_shop_item,
+            on_close=self._close_shop,
+        )
+
+    def _close_shop(self) -> None:
+        """关闭商店界面。"""
+        self._shop_menu = None
+
+    def _create_shop_stock(self) -> list:
+        """商店库存（固定全库存 + 价格）。"""
+        from src.items.potion import HealthPotion, StrengthPotion
+        from src.items.weapon import create_iron_sword, create_long_bow
+        return [
+            (create_iron_sword(), config.SHOP_PRICE_IRON_SWORD),
+            (create_long_bow(), config.SHOP_PRICE_LONG_BOW),
+            (HealthPotion(), config.SHOP_PRICE_HEALTH_POTION),
+            (StrengthPotion(), config.SHOP_PRICE_STRENGTH_POTION),
+        ]
+
+    def _buy_shop_item(self, index: int) -> None:
+        """购买商品：扣金币、入背包、标记售罄。"""
+        shop = self._shop_menu
+        if shop is None:
+            return
+        item, price = shop.stock[index]
+        if shop.is_sold(index):
+            return
+        if self.player.gold < price:
+            self._last_loot_desc = "金币不足！"
+            return
+        if self.player.inventory.is_full:
+            self._last_loot_desc = "背包已满！"
+            return
+        self.player.gold -= price
+        self.player.inventory.add(item)
+        shop.mark_sold(index)
+        self._last_loot_desc = f"购买了 {item.name}"
 
     # ========== 战斗模式 ==========
 
@@ -529,6 +604,8 @@ class PlayState(BaseState):
             if enemy.stats.is_dead() and id(enemy) not in self._counted_kills:
                 self._kills += 1
                 self._counted_kills.add(id(enemy))
+                # 商店经济：击杀掉落金币
+                self.player.gold += enemy.gold_reward
         # 战斗结束
         if self.battle.phase == TurnPhase.BATTLE_WON:
             is_boss = self._last_room and self._last_room.room_type == RoomType.BOSS
@@ -581,6 +658,7 @@ class PlayState(BaseState):
             "kills": self._kills,
             "floor": self.floor.level,
             "time": "00:00",  # Day 9 加计时
+            "gold": self.player.gold,
             "loot": loot_names,
         }
         self.game.change_state(GameOverState(self.game, victory=victory, stats=stats))
@@ -731,6 +809,10 @@ class PlayState(BaseState):
         if self._inventory_menu is not None:
             self._inventory_menu.update(0)
             self._inventory_menu.draw(screen, self.game.font)
+        # 商店界面
+        if self._shop_menu is not None:
+            self._shop_menu.update(0)
+            self._shop_menu.draw(screen, self.game.font)
 
     def _draw_battle_highlights(self, screen, cam_x, cam_y, ts) -> None:
         """绘制可移动（蓝）/可攻击（红）半透明高亮。"""
@@ -867,6 +949,7 @@ class PlayState(BaseState):
             self.player.inventory.add(HealthPotion())
             self.player.inventory.add(HealthPotion())
             self.player.inventory.add(StrengthPotion())
-            self._last_loot_desc = "[测试模式] 已获得全套物品，按 I 打开背包"
+            self.player.gold += 100  # 商店经济：送金币便于测试购买
+            self._last_loot_desc = "[测试模式] 已获得全套物品+100金币，按 I 打开背包"
         else:
             self._last_loot_desc = "[测试模式] 关闭"

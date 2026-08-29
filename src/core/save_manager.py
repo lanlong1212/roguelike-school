@@ -17,6 +17,8 @@ import json
 
 from typing import Any
 
+from src.core import config
+
 # 存档目录与文件
 SAVE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "saves")
 SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
@@ -94,6 +96,7 @@ def save_game(
         "player": {
             "x": int(pos.x),
             "y": int(pos.y),
+            "gold": player.gold,
             **_serialize_stats(player),
         },
         "inventory": items,
@@ -131,6 +134,7 @@ def apply_save_to_player(player, data: dict) -> None:
     player.stats.hp = min(p["hp"], p["max_hp"])
     player.stats.atk = p["atk"]
     player.stats.def_ = p["def_"]
+    player.gold = p.get("gold", config.START_GOLD)
 
     # 恢复背包物品
     for entry in data.get("inventory", []):
