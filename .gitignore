@@ -23,6 +23,8 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+*.spec
+*.zip
 
 # 日志
 *.log

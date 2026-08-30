@@ -15,14 +15,34 @@
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pygame
 
 from src.core import config
 
-# 项目 assets/images 根目录（src/core/asset_manager.py → 上两级 → assets/images）
-_IMAGE_ROOT = Path(__file__).resolve().parents[2] / "assets" / "images"
+
+def resource_root() -> Path:
+    """资源根目录（项目根）。
+
+    开发运行 = src/core/asset_manager.py 上两级；PyInstaller 打包后 =
+    解压目录（sys._MEIPASS），资源经 --add-data 打包进 exe。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parents[2]
+
+
+def saves_root() -> Path:
+    """存档目录：打包后放 exe 旁（_MEIPASS 临时目录会被清空导致丢档）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+# 项目 assets/images 根目录
+_IMAGE_ROOT = resource_root() / "assets" / "images"
 
 
 def _convert(surf: pygame.Surface) -> pygame.Surface:

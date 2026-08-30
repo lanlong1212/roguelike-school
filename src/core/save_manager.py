@@ -18,9 +18,10 @@ import json
 from typing import Any
 
 from src.core import config
+from src.core.asset_manager import saves_root
 
-# 存档目录与文件
-SAVE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "saves")
+# 存档目录与文件（打包后存到 exe 旁，避免随临时目录清空丢失）
+SAVE_DIR = str(saves_root() / "saves")
 SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
 
 
