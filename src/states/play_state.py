@@ -683,7 +683,10 @@ class PlayState(BaseState):
             if not (int(ec.x) + 2, int(ec.y)) == self.player.grid_pos:
                 enemies.append(_scaled(side))
         else:
-            num = 2 if room.room_type == RoomType.BATTLE else 1
+            # 战斗房敌人数量：L2 起 +1（1 史莱姆 + 2 骷髅），提高远程压力
+            num = 3 if (
+                room.room_type == RoomType.BATTLE and self.floor.level >= 2
+            ) else 2 if room.room_type == RoomType.BATTLE else 1
             corners = [
                 (room.x1 + 1, room.y1 + 1),
                 (room.x2 - 1, room.y1 + 1),
