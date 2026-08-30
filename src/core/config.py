@@ -16,7 +16,8 @@ TITLE = "迷城棋局 Labyrinth Chess"  # 窗口标题
 
 # ========== 瓦片规格 ==========
 TILE_SIZE = 32               # 单个瓦片边长（像素）
-ROOM_MAX_SIZE = 12           # 单个房间最大边长（瓦片数）
+ROOM_FIXED_W = 10            # 固定房间宽度（瓦片数，等分网格布局）
+ROOM_FIXED_H = 8             # 固定房间高度（瓦片数，等分网格布局）
 MAP_MAX_SIZE = 40            # 单层地图最大边长（瓦片数）
 MAX_FLOOR_LEVEL = 3          # 游戏最大楼层数（达到后击败 Boss 即通关）
 MOVE_ANIM_DURATION = 0.15    # 格间平滑移动动画时长（秒）
@@ -26,8 +27,8 @@ AP_MAX = 5                   # 每回合行动点上限
 MOVE_RANGE = 3               # 每回合移动格数上限
 
 # ========== 战棋化：战场障碍与 AoE ==========
-OBSTACLE_MIN = 2             # 战斗/精英房障碍柱数量下限
-OBSTACLE_MAX = 4             # 战斗/精英房障碍柱数量上限
+OBSTACLE_MIN = 6             # 战斗/精英/Boss 房障碍柱数量下限
+OBSTACLE_MAX = 10            # 战斗/精英/Boss 房障碍柱数量上限
 SPLASH_RADIUS = 1            # 火球溅射半径（3×3）
 
 # ========== 经济系统 ==========

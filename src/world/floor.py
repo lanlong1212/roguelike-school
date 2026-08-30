@@ -5,7 +5,7 @@
     组合 DungeonGenerator / TileMap / FogOfWar 形成一个完整楼层。
     对外提供一个 Floor 类，PlayState 只需实例化 Floor 即可获得
     tilemap / rooms / 出生点 / 迷雾。自动进行房间类型分配：
-    1 BOSS / 1 SHOP / 1 REST / 3 BATTLE（共 6 个）
+    1 BOSS / 1 SHOP / 1 REST / 1 ELITE / 2 BATTLE（共 6 个）
 """
 from __future__ import annotations
 
@@ -134,14 +134,18 @@ class Floor:
 
     def _place_battle_obstacles(self) -> None:
         """
-        在战斗/精英房内部随机放置障碍柱（WALL 单格）：
+        在战斗/精英/Boss 房内部随机放置障碍柱（WALL 单格）：
         - 数量 OBSTACLE_MIN~OBSTACLE_MAX，使用楼层种子保证可复现
-        - 只放在房间内圈（边距 1），避开房间中心 2 格范围（敌人出生区）
-          与四角出生点
+        - 只放在房间内圈（边距 1），避开房间中心 2 格范围（敌人出生区、
+          Boss 房下行阶梯）与四角出生点
         - 柱子之间不相邻（保持走廊感，单格散柱不会破坏连通性）
         """
         for room in self.rooms:
-            if room.room_type not in (RoomType.BATTLE, RoomType.ELITE):
+            if room.room_type not in (
+                RoomType.BATTLE,
+                RoomType.ELITE,
+                RoomType.BOSS,
+            ):
                 continue
             count = self.rng.randint(config.OBSTACLE_MIN, config.OBSTACLE_MAX)
             # 候选格：内圈（不含边框）
