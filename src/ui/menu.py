@@ -72,9 +72,10 @@ class PauseMenu:
 class InventoryMenu:
     """背包界面。"""
 
-    def __init__(self, inventory, on_use_item=None):
+    def __init__(self, inventory, on_use_item=None, on_close=None):
         self.inventory = inventory
         self.on_use_item = on_use_item
+        self.on_close = on_close
         sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
         # 面板
         panel_w, panel_h = 600, 400
@@ -89,7 +90,7 @@ class InventoryMenu:
         # 关闭按钮
         self.btn_close = Button(
             pygame.Rect(panel_x + panel_w - 100, panel_y + 10, 80, 28),
-            "关闭 (I)", on_click=None, color=(80, 30, 30),
+            "关闭 (B)", on_click=None, color=(80, 30, 30),
         )
         # 装备槽区域
         self.equip_rect = pygame.Rect(panel_x + 20, panel_y + 60, 180, 100)
@@ -160,6 +161,8 @@ class InventoryMenu:
     def handle_click(self, pos: tuple[int, int]) -> bool:
         # 关闭按钮
         if self.btn_close.handle_click(pos):
+            if self.on_close:
+                self.on_close()
             return True
         # 检测物品栏点击
         slot_size = 64

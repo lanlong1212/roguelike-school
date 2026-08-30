@@ -68,6 +68,19 @@ class HUD:
             center=False,
         )
 
+        # 状态面板收起开关（避免面板挡住地图上的敌人）
+        self.collapsed = False
+        # 展开态：面板右侧小按钮；收起态：左上角小按钮
+        self.toggle_rect = pygame.Rect(212, 8, 22, 22)
+
+    def toggle(self) -> None:
+        """切换状态面板显示/收起。"""
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self.toggle_rect = pygame.Rect(8, 8, 22, 22)
+        else:
+            self.toggle_rect = pygame.Rect(212, 8, 22, 22)
+
     def update(self, player, floor, battle=None, mode=None, loot_desc: str = "") -> None:
         """根据游戏状态更新 HUD 数据。"""
         # 血条
@@ -96,17 +109,27 @@ class HUD:
             self.tip_text.set_text(loot_desc)
         elif mode is not None and mode.name == "BATTLE":
             self.tip_text.set_text(
-                "1/2/3 技能 · M 移动 · H 药水 · 空格结束回合"
+                "1/2/3 技能 · M 移动 · H 药水 · 空格结束回合 · V 收起状态"
             )
         else:
-            self.tip_text.set_text("WASD 移动 · ESC 暂停 · I 背包 · T 测试模式")
+            self.tip_text.set_text("WASD 移动 · ESC 暂停 · I 背包 · V 收起状态")
 
     def draw(self, screen, font) -> None:
         """绘制 HUD。"""
-        self.status_panel.draw(screen, font)
-        self.hp_bar.draw(screen, font)
-        self.ap_bar.draw(screen, font)
-        self.status_text.draw(screen, font)
+        if not self.collapsed:
+            self.status_panel.draw(screen, font)
+            self.hp_bar.draw(screen, font)
+            self.ap_bar.draw(screen, font)
+            self.status_text.draw(screen, font)
         self.info_panel.draw(screen, font)
         self.info_text.draw(screen, font)
         self.tip_text.draw(screen, font)
+        # 收起开关按钮（收起时显示 ＋，展开时显示 −）
+        r = self.toggle_rect
+        pygame.draw.rect(screen, (15, 15, 25), r, border_radius=4)
+        pygame.draw.rect(screen, (80, 80, 100), r, 1, border_radius=4)
+        glyph = font.render("＋" if self.collapsed else "−", True, (220, 220, 200))
+        screen.blit(
+            glyph,
+            glyph.get_rect(center=r.center),
+        )

@@ -64,7 +64,7 @@ class Reaction(Enum):
     FROZEN = auto()          # 冻结：冰+水
     ELECTRO_CHARGED = auto() # 感电：雷+水
     SUPERCONDUCT = auto()    # 超导：雷+冰
-    MELT = auto()            # 熔化：火+冰 / 冰+火
+    MELT = auto()            # 融化：火+冰 / 冰+火
     OVERLOAD = auto()        # 超载：雷+火
 
 
@@ -73,7 +73,7 @@ REACTION_NAME: dict[Reaction, str] = {
     Reaction.FROZEN: "冻结",
     Reaction.ELECTRO_CHARGED: "感电",
     Reaction.SUPERCONDUCT: "超导",
-    Reaction.MELT: "熔化",
+    Reaction.MELT: "融化",
     Reaction.OVERLOAD: "超载",
 }
 
@@ -132,7 +132,7 @@ def _apply_reaction_status(
     elif reaction is Reaction.MELT:
         impact.bonus_damage = 1 + attacker_atk
         target.status_effects.add(
-            StatusEffect(EffectType.MELT, duration=1, source_name="熔化")
+            StatusEffect(EffectType.MELT, duration=1, source_name="融化")
         )
     elif reaction is Reaction.OVERLOAD:
         impact.bonus_damage = 1 + attacker_atk

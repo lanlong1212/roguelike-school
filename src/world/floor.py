@@ -56,6 +56,8 @@ class Floor:
         # 下行阶梯位置（Boss 房中心）。击败 Boss 前不可用，击败后 stair_active 置 True
         self.stair_pos: Vector2 | None = None
         self.stair_active: bool = False
+        # 房间内障碍柱格坐标集合（渲染区分障碍柱贴图与边界墙贴图）
+        self.obstacle_tiles: set[tuple[int, int]] = set()
 
         # 立即生成楼层
         self.generate_floor()
@@ -183,6 +185,8 @@ class Floor:
                     self.tilemap.set_tile(gx, gy, TileType.WALL)
                     placed.append((gx, gy))
                     break
+            # 收集本房间障碍柱（play_state 渲染用 obstacle 贴图区分边界墙）
+            self.obstacle_tiles.update(placed)
 
     def _pick_spawn(self) -> Vector2:
         """选择玩家出生位置：REST 房间中心。"""

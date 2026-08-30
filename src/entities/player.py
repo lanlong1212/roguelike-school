@@ -176,7 +176,7 @@ class Player(Entity):
 
     def __init__(self, position: Vector2 | None = None):
         stats = Stats(
-            max_hp=40,  # Day 9: 30→40，让玩家能扛住 Boss 多回合
+            max_hp=20,  # 初始血量 20
             atk=6,
             def_=2,
             max_ap=config.AP_MAX,

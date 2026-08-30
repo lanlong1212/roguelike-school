@@ -10,6 +10,7 @@ Day 5 扩展：
 """
 from __future__ import annotations
 
+import os
 from collections import deque
 from enum import Enum, auto
 from typing import Optional
@@ -34,7 +35,7 @@ from src.world.room import Room, RoomType
 from src.world.tilemap import TileType
 
 
-# ========== 渲染颜色表（tile → 颜色） ==========
+# ========== 渲染颜色表（tile → 颜色；有贴图的瓦片优先用贴图） ==========
 _TILE_COLORS: dict[TileType, tuple[int, int, int]] = {
     TileType.WALL: config.COLOR_WALL,
     TileType.FLOOR: config.COLOR_FLOOR,
@@ -42,6 +43,40 @@ _TILE_COLORS: dict[TileType, tuple[int, int, int]] = {
     TileType.TRAP: (180, 40, 40),
     TileType.STAIR: config.COLOR_STAIR,
 }
+
+# 瓦片贴图缓存（懒加载，缺失时回退色块）。来源 assets/images/tiles/game/
+_TILE_SURFACE_NAMES: dict[TileType, str] = {
+    TileType.FLOOR: "floor.png",
+    TileType.WALL: "wall.png",
+    TileType.STAIR: "stair.png",
+}
+_TILE_SURFACES: dict[TileType, "pygame.Surface | None"] = {}
+
+
+def _get_tile_surface(tile: TileType) -> "pygame.Surface | None":
+    """返回瓦片贴图（首次加载后缓存）；素材缺失返回 None 走色块回退。"""
+    if tile not in _TILE_SURFACES:
+        name = _TILE_SURFACE_NAMES.get(tile)
+        path = os.path.join("assets", "images", "tiles", "game", name) if name else None
+        if path and os.path.exists(path):
+            _TILE_SURFACES[tile] = pygame.image.load(path).convert_alpha()
+        else:
+            _TILE_SURFACES[tile] = None
+    return _TILE_SURFACES[tile]
+
+
+# 房间障碍柱贴图（区别于边界墙），与瓦片贴图同样懒加载
+_OBSTACLE_SURFACE: list["pygame.Surface | None"] = []
+
+
+def _get_obstacle_surface() -> "pygame.Surface | None":
+    """返回障碍柱贴图（首次加载后缓存）；素材缺失返回 None 走色块回退。"""
+    if not _OBSTACLE_SURFACE:
+        path = os.path.join("assets", "images", "tiles", "game", "obstacle.png")
+        _OBSTACLE_SURFACE.append(
+            pygame.image.load(path).convert_alpha() if os.path.exists(path) else None
+        )
+    return _OBSTACLE_SURFACE[0]
 
 _ROOM_TYPE_LABEL: dict[RoomType, tuple[str, tuple[int, int, int]]] = {
     RoomType.BATTLE: ("战", config.COLOR_ENEMY),
@@ -216,7 +251,7 @@ class PlayState(BaseState):
             self._key_order.append(event.key)
 
         if event.type == pygame.KEYDOWN:
-            # ESC → 商店/休息界面开着则先关闭；否则 Day 8：暂停
+            # ESC → 商店/休息/背包界面开着则先关闭；否则 Day 8：暂停
             if event.key == pygame.K_ESCAPE:
                 if self._shop_menu is not None:
                     self._shop_menu = None
@@ -224,22 +259,31 @@ class PlayState(BaseState):
                 if self._rest_menu is not None:
                     self._rest_menu = None
                     return
+                if self._inventory_menu is not None:
+                    self._close_inventory()
+                    return
                 from src.states.pause_state import PauseState
                 self.game.push_state(PauseState(self.game, play_state=self))
                 return
 
-            # I 键 → 打开/关闭背包
-            if event.key == pygame.K_i:
+            # V 键 → 收起/展开状态面板（避免血条挡住地图上的敌人）
+            if event.key == pygame.K_v:
+                self.hud.toggle()
+                return
+
+            # B 键 → 打开/关闭背包
+            if event.key == pygame.K_b:
                 if self._inventory_menu is None:
                     self._inventory_menu = InventoryMenu(
                         self.player.inventory,
                         on_use_item=self._use_inventory_item,
+                        on_close=self._close_inventory,
                     )
                 else:
-                    self._inventory_menu = None
+                    self._close_inventory()
                 return
 
-            # 背包打开时只响应 I/Esc
+            # 背包打开时只响应 B/Esc
             if self._inventory_menu is not None:
                 return
 
@@ -277,6 +321,10 @@ class PlayState(BaseState):
                     self._use_first_potion()
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # HUD 收起按钮（最高优先级）
+            if self.hud.toggle_rect.collidepoint(event.pos):
+                self.hud.toggle()
+                return
             # 背包打开时点击背包
             if self._inventory_menu is not None:
                 self._inventory_menu.handle_click(event.pos)
@@ -1092,14 +1140,23 @@ class PlayState(BaseState):
         gx_end = min(tilemap.width, int(cam_x + screen_tiles_x) + 1)
         gy_end = min(tilemap.height, int(cam_y + screen_tiles_y) + 1)
 
-        # ---------- 第一层：瓦片 ----------
+        # ---------- 第一层：瓦片（有贴图用贴图，缺失回退色块） ----------
+        obstacles = self.floor.obstacle_tiles
         for gy in range(gy_start, gy_end):
             for gx in range(gx_start, gx_end):
                 tile = tilemap.get_tile(gx, gy)
-                color = _TILE_COLORS.get(tile, config.COLOR_WALL)
+                # 障碍柱（房间内单格墙）与边界墙使用不同贴图
+                if tile == TileType.WALL and (gx, gy) in obstacles:
+                    surf = _get_obstacle_surface()
+                else:
+                    surf = _get_tile_surface(tile)
                 sx = int((gx - cam_x) * ts)
                 sy = int((gy - cam_y) * ts)
-                pygame.draw.rect(screen, color, (sx, sy, ts, ts))
+                if surf is not None:
+                    screen.blit(surf, (sx, sy))
+                else:
+                    color = _TILE_COLORS.get(tile, config.COLOR_WALL)
+                    pygame.draw.rect(screen, color, (sx, sy, ts, ts))
 
         # ---------- 第二层：战斗高亮 ----------
         if self.mode == PlayMode.BATTLE:
@@ -1474,6 +1531,10 @@ class PlayState(BaseState):
                     FloatingText(f"+{healed}", sx, sy, (100, 255, 100))
                 )
             self._last_loot_desc = f"使用 {item.name}"
+
+    def _close_inventory(self) -> None:
+        """关闭背包界面（B 键 / 关闭按钮 / Esc 共用的单一出口）。"""
+        self._inventory_menu = None
 
     def _toggle_test_mode(self) -> None:
         """Day 9：切换测试模式，送全套物品用于测试装备系统。"""

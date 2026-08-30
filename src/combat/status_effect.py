@@ -9,7 +9,7 @@
     - SHOCK  感电：受击伤害 ×1.5（雷+水 反应）
     - DEF_DOWN 破甲：防御 -50%（雷+冰 反应）
     - SLOW   减速：下回合 AP 上限 -1（寒冰箭附加）
-    - MELT   熔化：受击伤害 ×1.25（火+冰 反应）
+    - MELT   融化：受击伤害 ×1.25（火+冰 反应）
     - OVERLOAD 超载：回合结束受到 magnitude 点雷伤（雷+火 反应）
 
     状态附加到实体上，由战斗管理器在回合开始/结束时统一处理。
@@ -33,7 +33,7 @@ class EffectType(Enum):
     SHOCK = auto()     # 感电
     DEF_DOWN = auto()  # 破甲
     SLOW = auto()      # 减速（AP 上限 -1）
-    MELT = auto()      # 熔化：受击伤害 ×1.25
+    MELT = auto()      # 融化：受击伤害 ×1.25
     OVERLOAD = auto()  # 超载：回合结束受到 magnitude 点雷伤
 
 
@@ -45,7 +45,7 @@ EFFECT_DISPLAY_NAME: dict[EffectType, str] = {
     EffectType.SHOCK: "感电",
     EffectType.DEF_DOWN: "破甲",
     EffectType.SLOW: "减速",
-    EffectType.MELT: "熔化",
+    EffectType.MELT: "融化",
     EffectType.OVERLOAD: "超载",
 }
 

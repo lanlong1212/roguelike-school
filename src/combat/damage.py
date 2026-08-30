@@ -115,7 +115,7 @@ def apply_damage(
     if target.status_effects.has(EffectType.SHOCK):
         result.damage = int(result.damage * 1.5)
 
-    # 熔化（火+冰 反应）：受击伤害 ×1.25
+    # 融化（火+冰 反应）：受击伤害 ×1.25
     if target.status_effects.has(EffectType.MELT):
         result.damage = int(result.damage * 1.25)
 
