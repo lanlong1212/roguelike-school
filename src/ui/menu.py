@@ -15,6 +15,7 @@ import pygame
 
 from src.core import config
 from src.items.item import Item, ItemType
+from src.ui.icons import fit_icon, get_element_icon, get_item_icon
 from src.ui.ui_element import Button, Panel, Text
 
 
@@ -117,8 +118,14 @@ class InventoryMenu:
         # 显示当前武器
         weapon = self.inventory.equipped_weapon
         if weapon:
+            wx = self.equip_rect.x + 6
+            wy = self.equip_rect.y + 28
+            icon = get_item_icon(weapon.id)
+            if icon is not None:
+                screen.blit(fit_icon(icon, 20), (wx, wy + 1))
+                wx += 24
             w_text = font.render(f"武器: {weapon.name}", True, (255, 255, 255))
-            screen.blit(w_text, (self.equip_rect.x + 6, self.equip_rect.y + 28))
+            screen.blit(w_text, (wx, wy))
             mod = weapon.stat_modifiers
             mod_text = font.render(
                 f"ATK+{mod.atk_bonus} DEF+{mod.def_bonus}", True, (180, 180, 180)
@@ -141,10 +148,16 @@ class InventoryMenu:
             pygame.draw.rect(screen, (80, 80, 100), rect, 1, border_radius=4)
             item = self.inventory.get_item(i)
             if item:
-                # 物品名首字
-                color = self._rarity_color(item.rarity)
-                name_text = font.render(item.name[:2], True, color)
-                screen.blit(name_text, (sx + 4, sy + 4))
+                # 物品图标（有素材贴图居中，无素材回退名字文字）
+                icon = get_item_icon(item.id)
+                if icon is not None:
+                    icon_surf = fit_icon(icon, 48)
+                    off = (slot_size - 48) // 2
+                    screen.blit(icon_surf, (sx + off, sy + off))
+                else:
+                    color = self._rarity_color(item.rarity)
+                    name_text = font.render(item.name[:2], True, color)
+                    screen.blit(name_text, (sx + 4, sy + 4))
                 # 数量
                 if item.count > 1:
                     cnt_text = font.render(f"x{item.count}", True, (255, 255, 255))
@@ -246,13 +259,18 @@ class ShopMenu:
             pygame.draw.rect(screen, bg, rect, border_radius=4)
             border = (110, 100, 60) if not sold else (60, 60, 60)
             pygame.draw.rect(screen, border, rect, 1, border_radius=4)
-            # 名称（稀有度颜色）
+            # 名称（稀有度颜色）；左侧带物品图标时名称右移
             name_color = self._rarity_color(item.rarity) if not sold else (90, 90, 90)
+            icon = get_item_icon(item.id)
+            text_x = rect.x + 10
+            if icon is not None:
+                screen.blit(fit_icon(icon, 40), (rect.x + 6, rect.y + 15))
+                text_x = rect.x + 52
             name_text = font.render(item.name, True, name_color)
-            screen.blit(name_text, (rect.x + 10, rect.y + 8))
+            screen.blit(name_text, (text_x, rect.y + 8))
             # 描述
             desc_text = font.render(item.description, True, (170, 170, 170))
-            screen.blit(desc_text, (rect.x + 10, rect.y + 32))
+            screen.blit(desc_text, (text_x, rect.y + 32))
             # 价格/售罄
             if sold:
                 price_text = font.render("已售罄", True, (90, 90, 90))
@@ -415,10 +433,14 @@ class RestMenu:
                         ELEMENT_COLOR[skill.element]
                         if skill.element is not Element.NONE else (230, 230, 230)
                     )
+                    # 元素技能图标（行左侧 20×20；无元素技能不画）
+                    icon = get_element_icon(skill.element) if skill.element is not Element.NONE else None
+                    if icon is not None:
+                        screen.blit(fit_icon(icon, 20), (rect.x + 12, rect.y + 7))
                     name_text = small.render(skill.name, True, name_color)
                     screen.blit(name_text, (rect.x + 64, rect.y + 2))
                     desc_text = small.render(skill.desc, True, (170, 170, 170))
-                    screen.blit(desc_text, (rect.x + 10, rect.y + 18))
+                    screen.blit(desc_text, (rect.x + 64, rect.y + 18))
 
     def handle_click(self, pos: tuple[int, int]) -> bool:
         # 关闭按钮

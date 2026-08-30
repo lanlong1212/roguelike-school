@@ -10,7 +10,6 @@ Day 5 扩展：
 """
 from __future__ import annotations
 
-import os
 from collections import deque
 from enum import Enum, auto
 from typing import Optional
@@ -23,10 +22,12 @@ from src.combat.element import ELEMENT_COLOR, ELEMENT_NAME, REACTION_NAME, Eleme
 from src.combat.status_effect import EFFECT_DISPLAY_NAME
 from src.core import config
 from src.core import save_manager
+from src.core.asset_manager import resource_root
 from src.entities.enemy import Enemy
 from src.entities.player import Player, Skill, get_skill_pool
 from src.states.base_state import BaseState
 from src.ui.hud import HUD
+from src.ui.icons import get_element_icon
 from src.ui.menu import InventoryMenu, RestMenu, ShopMenu
 from src.utils.vector import Vector2
 from src.world.floor import Floor
@@ -52,14 +53,17 @@ _TILE_SURFACE_NAMES: dict[TileType, str] = {
 }
 _TILE_SURFACES: dict[TileType, "pygame.Surface | None"] = {}
 
+# 游戏瓦片贴图目录（兼容开发与 PyInstaller 打包环境）
+_TILE_GAME_DIR = resource_root() / "assets" / "images" / "tiles" / "game"
+
 
 def _get_tile_surface(tile: TileType) -> "pygame.Surface | None":
     """返回瓦片贴图（首次加载后缓存）；素材缺失返回 None 走色块回退。"""
     if tile not in _TILE_SURFACES:
         name = _TILE_SURFACE_NAMES.get(tile)
-        path = os.path.join("assets", "images", "tiles", "game", name) if name else None
-        if path and os.path.exists(path):
-            _TILE_SURFACES[tile] = pygame.image.load(path).convert_alpha()
+        path = _TILE_GAME_DIR / name if name else None
+        if path and path.exists():
+            _TILE_SURFACES[tile] = pygame.image.load(str(path)).convert_alpha()
         else:
             _TILE_SURFACES[tile] = None
     return _TILE_SURFACES[tile]
@@ -72,9 +76,9 @@ _OBSTACLE_SURFACE: list["pygame.Surface | None"] = []
 def _get_obstacle_surface() -> "pygame.Surface | None":
     """返回障碍柱贴图（首次加载后缓存）；素材缺失返回 None 走色块回退。"""
     if not _OBSTACLE_SURFACE:
-        path = os.path.join("assets", "images", "tiles", "game", "obstacle.png")
+        path = _TILE_GAME_DIR / "obstacle.png"
         _OBSTACLE_SURFACE.append(
-            pygame.image.load(path).convert_alpha() if os.path.exists(path) else None
+            pygame.image.load(str(path)).convert_alpha() if path.exists() else None
         )
     return _OBSTACLE_SURFACE[0]
 
@@ -182,6 +186,8 @@ class PlayState(BaseState):
         # 休息房间：当前打开的休息界面 / 各房间是否已使用（按房间 id）
         self._rest_menu: RestMenu | None = None
         self._rest_used: set[int] = set()
+        # 玩家死亡演出：等待敌人攻击动画播完再跳结算（避免画面生硬）
+        self._pending_lost: bool = False
 
     # ========== 生命周期 ==========
 
@@ -398,6 +404,17 @@ class PlayState(BaseState):
                 # 敌人攻击后生成飘字（敌人攻击玩家时）
                 self._spawn_enemy_damage_floating_text()
                 self._after_enemy_turn()
+
+        # 玩家死亡演出结束（敌人攻击动画播完）→ 跳转结算
+        if self._pending_lost and self.battle is not None:
+            if not any(
+                e.animator is not None and e.animator.current.startswith("attack")
+                for e in self.battle.enemies
+            ):
+                self._pending_lost = False
+                self._end_battle(victory=False)
+                self._goto_game_over(victory=False)
+                return
 
         # 状态处理日志显示（冻结/眩晕等）
         if self.battle and self.battle.last_status_logs:
@@ -723,7 +740,10 @@ class PlayState(BaseState):
                     visited[(nx, ny)] = dist + 1
                     continue
                 visited[(nx, ny)] = dist + 1
-                self._move_range[(nx, ny)] = dist + 1
+                # 锁门：未清空战斗房前，房间外格子不可走也不显示
+                locked_room = self._current_room if self._is_battle_room_locked() else None
+                if locked_room is None or locked_room.contains(nx, ny):
+                    self._move_range[(nx, ny)] = dist + 1
                 queue.append(((nx, ny), dist + 1))
 
         # --- 攻击范围：按当前技能 range_cells ---
@@ -764,6 +784,19 @@ class PlayState(BaseState):
             self._open_shop(room)
         elif room.room_type == RoomType.REST:
             self._open_rest(room)
+
+    def _is_battle_room_locked(self) -> bool:
+        """当前所在战斗/精英/Boss 房是否处于锁门状态（已开战且未全灭）。"""
+        room = self._current_room
+        if room is None or room.room_type not in (
+            RoomType.BATTLE, RoomType.ELITE, RoomType.BOSS,
+        ):
+            return False
+        center = room.center()
+        return (
+            id(room) in self._battles_triggered
+            and (int(center.x), int(center.y)) not in self._cleared_room_positions
+        )
 
     def _handle_battle_click(self, mouse_pos: tuple[int, int]) -> None:
         """
@@ -825,6 +858,22 @@ class PlayState(BaseState):
 
         # 点击可移动格子 → MoveAction
         if (gx, gy) in self._move_range and (gx, gy) != self.player.grid_pos:
+            # 锁门：未清空战斗房前不可走出房间
+            if self._is_battle_room_locked():
+                room = self._current_room
+                if room is not None and not room.contains(gx, gy):
+                    sx = (
+                        (self.player.visual_pos.x - self.camera.x) * ts
+                        + ts // 4
+                    )
+                    sy = (
+                        (self.player.visual_pos.y - self.camera.y) * ts
+                        - 4
+                    )
+                    self._floating_texts.append(
+                        FloatingText("消灭所有敌人后才能离开!", sx, sy, (255, 220, 120))
+                    )
+                    return
             action = MoveAction(self.player, Vector2(gx, gy), ap_cost=1)
             if self.battle.execute_action(action):
                 self._after_player_action()
@@ -963,6 +1012,13 @@ class PlayState(BaseState):
         self.battle.last_damage_result = None
         self.battle.last_damage_target = None
 
+    def _spawn_player_hint(self, text: str, color=(255, 220, 120)) -> None:
+        """在玩家头顶生成提示飘字（如 AP 耗尽），与伤害飘字错开。"""
+        ts = config.TILE_SIZE
+        sx = (self.player.visual_pos.x - self.camera.x) * ts + ts // 4
+        sy = (self.player.visual_pos.y - self.camera.y) * ts - 16
+        self._floating_texts.append(FloatingText(text, sx, sy, color))
+
     def _after_player_action(self) -> None:
         """玩家执行行动后：刷新高亮、迷雾、相机，检查战斗结束。"""
         assert self.player and self.floor and self.battle
@@ -1013,14 +1069,16 @@ class PlayState(BaseState):
         self._compute_battle_highlights()
         self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
         self._update_camera()
+        # AP 耗尽：提示手动结束回合（不自动切换）
+        if self.player.stats.ap <= 0:
+            self._spawn_player_hint("AP已耗尽")
 
     def _after_enemy_turn(self) -> None:
         """敌人回合结束，回到玩家回合：刷新 AP 与高亮。"""
         assert self.player and self.battle
         if self.battle.phase == TurnPhase.BATTLE_LOST:
-            self._end_battle(victory=False)
-            # Day 8：玩家死亡跳转 GameOver
-            self._goto_game_over(victory=False)
+            # 玩家死亡：不立即跳结算，先让敌人攻击动画播完再跳转
+            self._pending_lost = True
             return
         self._compute_battle_highlights()
 
@@ -1344,15 +1402,15 @@ class PlayState(BaseState):
             num_surf = self.game.font_small.render(str(i + 1), True, (20, 20, 20))
             pygame.draw.rect(screen, (255, 255, 255), (rect.x, rect.y, 15, 15))
             screen.blit(num_surf, (rect.x + 2, rect.y + 1))
-            # AP 充足时右下角显示 AP 消耗
-            if self.player.stats.ap >= skill.ap_cost:
-                ap_surf = self.game.font_small.render(f"{skill.ap_cost}AP", True, (190, 220, 255))
-                screen.blit(ap_surf, (rect.right - ap_surf.get_width() - 3, rect.bottom - ap_surf.get_height() - 1))
-            # AP 不足时整格灰显
+            # AP 不足时整格灰显（图标灰化，AP 文字在格下方不受影响）
             if self.player.stats.ap < skill.ap_cost:
                 overlay = pygame.Surface((slot_size, slot_size), pygame.SRCALPHA)
                 overlay.fill((0, 0, 0, 160))
                 screen.blit(overlay, rect)
+            # 图标下方居中显示 AP 消耗（始终可见；AP 不足时灰色）
+            ap_color = (190, 220, 255) if self.player.stats.ap >= skill.ap_cost else (120, 120, 130)
+            ap_surf = self.game.font_small.render(f"{skill.ap_cost}AP", True, ap_color)
+            screen.blit(ap_surf, (rect.centerx - ap_surf.get_width() // 2, rect.bottom + 1))
             # 悬停检测
             if rect.collidepoint(mouse_pos):
                 hovered_skill = skill
@@ -1384,8 +1442,15 @@ class PlayState(BaseState):
     # ========== 技能图标绘制 ==========
 
     def _draw_skill_icon(self, screen, skill: Skill, rect: pygame.Rect) -> None:
-        """在图标格内绘制技能图形（按技能类型/元素区分）。"""
+        """在图标格内绘制技能图形：元素技能用贴图，无元素技能用手绘。"""
         cx, cy = rect.centerx, rect.centery
+        if skill.element is not Element.NONE:
+            icon = get_element_icon(skill.element)
+            if icon is not None:
+                # 32×32 素材放大到 40×40 居中（最近邻保持像素风）
+                scaled = pygame.transform.scale(icon, (40, 40))
+                screen.blit(scaled, (cx - 20, cy - 20))
+                return
         if skill.id == "basic_attack":
             self._draw_sword(screen, cx, cy, (200, 200, 210))
         elif skill.id == "charge_slash":
@@ -1451,7 +1516,7 @@ class PlayState(BaseState):
     # ========== 技能说明面板（悬停） ==========
 
     def _draw_skill_tooltip(self, screen, skill: Skill, anchor: pygame.Rect) -> None:
-        """悬停技能图标时绘制说明面板。"""
+        """悬停技能图标时绘制说明面板（元素技能标题前带元素小图标）。"""
         element_tag = "" if skill.element is Element.NONE else f"· {ELEMENT_NAME[skill.element]}属性"
         # 战棋化标签：AoE 形态 / 附加状态
         aoe_tag = {"splash": "  3×3溅射", "line": "  直线穿透"}.get(skill.aoe, "")
@@ -1460,6 +1525,9 @@ class PlayState(BaseState):
             ELEMENT_COLOR[skill.element]
             if skill.element is not Element.NONE else config.COLOR_TEXT_HIGHLIGHT
         )
+        # 元素小图标（16×16，标题左侧；无元素技能不画）
+        icon = get_element_icon(skill.element) if skill.element is not Element.NONE else None
+        icon_size = 16
         lines: list[tuple[str, tuple, object]] = [
             (skill.name, title_color, self.game.font),
             (
@@ -1470,7 +1538,11 @@ class PlayState(BaseState):
         ]
         pad = 8
         line_h = 18
-        panel_w = max(font.size(t)[0] for t, _, font in lines) + pad * 2
+        title_extra = icon_size + 6 if icon is not None else 0
+        panel_w = max(
+            font.size(t)[0] + (title_extra if idx == 0 else 0)
+            for idx, (t, _, font) in enumerate(lines)
+        ) + pad * 2
         panel_h = pad * 2 + line_h * len(lines)
         x = anchor.x
         y = anchor.bottom + 6
@@ -1483,8 +1555,14 @@ class PlayState(BaseState):
         screen.blit(bg, (x, y))
         pygame.draw.rect(screen, (110, 110, 130), (x, y, panel_w, panel_h), 1, border_radius=4)
         for idx, (text, color, font) in enumerate(lines):
+            tx = x + pad
+            # 标题行左侧画元素图标，文本右移避开
+            if idx == 0 and icon is not None:
+                scaled = pygame.transform.scale(icon, (icon_size, icon_size))
+                screen.blit(scaled, (tx, y + pad - 2))
+                tx += icon_size + 6
             surf = font.render(text, True, color)
-            screen.blit(surf, (x + pad, y + pad + idx * line_h))
+            screen.blit(surf, (tx, y + pad + idx * line_h))
 
     def _use_first_potion(self) -> None:
         """Day 7：使用背包里第一个药水（H 键）。"""

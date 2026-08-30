@@ -4,12 +4,12 @@
 功能说明：
     战斗系统的核心调度器。维护战斗参与者、当前回合方、行动队列。
     每次玩家执行行动时，先校验 AP 是否足够，扣除后执行；
-    AP 归零或玩家点击结束回合，自动切换到敌人回合。
+    AP 耗尽仅提示，由玩家点击结束回合后才切换到敌人回合。
     Day 4：敌人回合为占位（什么都不做立即切回玩家回合）。
     Day 6：接入行为树，敌人回合调用 AI.tick() 执行行动。
 
 回合状态机（PRD 第 4.3 节）：
-    PLAYER_TURN → (AP=0 或 EndTurn) → ENEMY_TURN → (AI 完成) → PLAYER_TURN
+    PLAYER_TURN → (EndTurn) → ENEMY_TURN → (AI 完成) → PLAYER_TURN
 """
 from __future__ import annotations
 
@@ -88,10 +88,14 @@ class BattleManager:
             self.phase = TurnPhase.BATTLE_WON
             return True
 
-        # AP 归零或玩家主动结束回合 → 切到敌人回合（先处理玩家回合结束状态）
-        if isinstance(action, EndTurnAction) or self.player.stats.ap <= 0:
+        # 仅玩家主动结束回合才切换到敌人回合；AP 耗尽后留在玩家回合，
+        # 由玩家手动点击结束（UI 层据此提示"AP已耗尽"）
+        if isinstance(action, EndTurnAction):
             self.player.status_effects.on_turn_end(self.player)
             self._start_enemy_turn()
+        elif self.player.stats.ap <= 0:
+            # AP 归零：提示玩家手动结束回合
+            self.last_action_desc = "AP已耗尽，请手动结束回合"
 
         return True
 
