@@ -80,11 +80,15 @@ class AttackAction(Action):
         self.element = element
 
     def execute(self, manager: "BattleManager") -> None:
-        # 朝向目标 + 攻击动画（播完自动回 idle）
+        # 朝向目标 + 攻击动画（播完自动回 idle；实体可用 attack_anim_name
+        # 覆盖动作，如精英按阶段切换 attack0/idle/attack1）
         dx = self.target.grid_x - self.actor.grid_x
         dy = self.target.grid_y - self.actor.grid_y
         self.actor.face(dx, dy)
-        self.actor.play_anim("attack", restart=True)
+        self.actor.play_anim(getattr(self.actor, "attack_anim_name", "attack"), restart=True)
+        # 标记本回合已攻击：AI 移动节点据此不再走位，保证攻击动画完整播出
+        if hasattr(self.actor, "attacked_this_turn"):
+            self.actor.attacked_this_turn = True
         # 计算伤害并扣血（含元素附着/反应/护盾）
         result = apply_damage(self.actor, self.target, self.multiplier, self.element)
         # 暴击/元素/反应描述
@@ -132,11 +136,14 @@ class SkillAction(Action):
         if self.target is None:
             manager.last_action_desc = f"{self.actor.name} 释放 {self.skill_name}（无目标）"
             return
-        # 朝向目标 + 攻击动画（播完自动回 idle）
+        # 朝向目标 + 攻击动画（播完自动回 idle；同 AttackAction 支持阶段动画覆盖）
         dx = self.target.grid_x - self.actor.grid_x
         dy = self.target.grid_y - self.actor.grid_y
         self.actor.face(dx, dy)
-        self.actor.play_anim("attack", restart=True)
+        self.actor.play_anim(getattr(self.actor, "attack_anim_name", "attack"), restart=True)
+        # 标记本回合已攻击（同 AttackAction，防止后续走位打断攻击动画）
+        if hasattr(self.actor, "attacked_this_turn"):
+            self.actor.attacked_this_turn = True
         # 与 AttackAction 共用伤害逻辑（含元素附着/反应/护盾）
         result = apply_damage(self.actor, self.target, self.multiplier, self.element)
         crit_str = " 暴击!" if result.is_crit else ""

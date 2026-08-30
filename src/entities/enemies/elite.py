@@ -52,6 +52,34 @@ class Elite(Enemy):
             Element.LIGHTNING: 1.25,
             Element.FIRE: 0.75,
         }
+        # 动画注册（横向帧表位于 assets/images/entities/elite_mob/）：
+        # idle 8fps / walk 10fps 循环；attack(阶段1 远程) 12fps / hurt 12fps
+        # 播完回 idle；attack_rage(阶段3 狂暴) 12fps 播完回 idle；death 10fps
+        # 播完停留。get_actor_frames 跨动画统一缩放，避免攻击动作（包围盒
+        # 大）导致切换动画时角色突然缩小；素材缺失时该动画不在结果中、
+        # add 自动忽略，全部缺失则走 Entity 色块回退，不影响战斗逻辑。
+        from src.core.asset_manager import assets
+        from src.entities.animation import Animator
+        frames = assets.get_actor_frames({
+            "idle": "entities/elite_mob/idle",
+            "walk": "entities/elite_mob/walk",
+            "attack": "entities/elite_mob/attack0",
+            "attack_rage": "entities/elite_mob/attack1",
+            "hurt": "entities/elite_mob/hurt",
+            "death": "entities/elite_mob/death",
+        })
+        anim = Animator()
+        anim.add("idle", frames.get("idle", []), 8)
+        anim.add("walk", frames.get("walk", []), 10)
+        anim.add("attack", frames.get("attack", []), 12, loop=False, on_finish="idle")
+        anim.add("attack_rage", frames.get("attack_rage", []), 12, loop=False, on_finish="idle")
+        anim.add("hurt", frames.get("hurt", []), 12, loop=False, on_finish="idle")
+        anim.add("death", frames.get("death", []), 10, loop=False)
+        anim.play("idle")
+        self.animator = anim
+        # 阶段攻击动画名：action 层播放攻击时动态读取（阶段 2 召唤/施法无专门
+        # 动作，播放 idle 表示原地对空引导）
+        self.attack_anim_name: str = "attack"
         self._phase1_tree: BehaviorTree = create_elite_phase1_tree()
         self._phase2_tree: BehaviorTree = create_elite_phase2_tree()
         self._phase3_tree: BehaviorTree = create_elite_phase3_tree()
@@ -75,10 +103,13 @@ class Elite(Enemy):
             self._phase = new_phase
             if new_phase == 1:
                 self.behavior_tree = self._phase1_tree
+                self.attack_anim_name = "attack"      # 远程消耗 → attack0
             elif new_phase == 2:
                 self.behavior_tree = self._phase2_tree
+                self.attack_anim_name = "idle"        # 召唤/施法 → 原地待机姿态
             else:
                 self.behavior_tree = self._phase3_tree
+                self.attack_anim_name = "attack_rage" # 狂暴连击 → attack1
 
     def take_ai_turn(self, manager) -> NodeStatus | None:
         """每回合 tick 前检查阶段切换。"""

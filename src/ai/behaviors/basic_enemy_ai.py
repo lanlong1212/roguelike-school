@@ -52,8 +52,8 @@ def _attack_player(actor: "Entity", ctx: "BattleManager") -> bool:
 
 
 def _move_toward_player(actor: "Entity", ctx: "BattleManager") -> bool:
-    """朝玩家方向移动 1 格（贪心：先 dx 后 dy）。"""
-    if actor.stats.ap < 1:
+    """朝玩家方向移动 1 格（贪心：先 dx 后 dy）。本回合已攻击则不再走位。"""
+    if actor.stats.ap < 1 or getattr(actor, "attacked_this_turn", False):
         return False
     dx = _sign(ctx.player.grid_x - actor.grid_x)
     dy = _sign(ctx.player.grid_y - actor.grid_y)

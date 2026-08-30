@@ -130,6 +130,8 @@ class BattleManager:
             if enemy.stats.is_dead():
                 continue
             self._reset_ap_with_slow(enemy)
+            # 重置"本回合已攻击"标志（AI 移动节点据此避免攻击后走位）
+            enemy.attacked_this_turn = False
             # 附着持续计时 + 回合开始状态处理
             enemy.status_effects.tick_aura()
             logs = enemy.status_effects.on_turn_start(enemy)

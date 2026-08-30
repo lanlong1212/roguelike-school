@@ -50,6 +50,11 @@ class Enemy(Entity):
         self.behavior_tree: "BehaviorTree | None" = None
         # 击杀掉落金币（商店经济系统，子类覆盖）
         self.gold_reward: int = 0
+        # 行走结束后的静止计时（超时回待机动画，避免原地循环踏步）
+        self._idle_t: float = 0.0
+        # 本回合是否已攻击：攻击后 AI 移动节点不再走位，避免攻击动画
+        # 起手即被后续走位的 walk 覆盖（演出上只见移动不见攻击）
+        self.attacked_this_turn: bool = False
 
     # ========== AI 接口（Day 6 实现） ==========
 
@@ -65,6 +70,29 @@ class Enemy(Entity):
         if self.behavior_tree is not None:
             return self.behavior_tree.tick(self, manager)
         return None
+
+    def tick_fx(self, dt: float) -> None:
+        """子类特效动画层推进钩子（如 Boss AOE 粒子），默认无。"""
+        fx = getattr(self, "fx_animator", None)
+        if fx is not None:
+            fx.update(dt)
+
+    def tick_idle(self, dt: float, threshold: float = 0.7) -> None:
+        """
+        行走结束静止超时 → 回待机动画。
+
+        MoveAction 播的 walk 是循环动画，移动到位（视觉插值完成）后若不
+        处理会原地循环踏步。仅打断 walk 前缀动画，不碰 attack/death；
+        再次移动时 _move_t 归零，计时自动重置。
+        """
+        if self.animator is None:
+            return
+        if self._move_t >= 1.0 and self.animator.current.startswith("walk"):
+            self._idle_t += dt
+            if self._idle_t > threshold:
+                self.play_anim("idle")
+        else:
+            self._idle_t = 0.0
 
     # ========== 渲染 ==========
 

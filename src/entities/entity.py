@@ -144,7 +144,10 @@ class Entity:
         if self.animator is not None:
             frame = self.animator.surface
             if frame is not None:
-                screen.blit(frame, (sx, sy))
+                fw, fh = frame.get_size()
+                # 帧画布可宽于瓦片（横向攻击特效由加宽画布承载）：
+                # 水平居中、底边对齐（脚踩格底）；32x32 帧时偏移为 (0, 0)
+                screen.blit(frame, (sx + (ts - fw) // 2, sy + (ts - fh)))
                 return
         # 几何色块渲染（无素材时的回退）：略小于瓦片，留边距
         inset = 4

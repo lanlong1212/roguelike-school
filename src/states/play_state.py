@@ -323,6 +323,8 @@ class PlayState(BaseState):
                     e.update_visual(dt)  # 平滑移动插值
                     if e.animator is not None:
                         e.animator.update(dt)
+                        e.tick_idle(dt)  # 走完静止超时 → 回待机，避免原地踏步
+                    e.tick_fx(dt)  # 子类特效层推进（Boss AOE 粒子）
 
         # 相机每帧跟随玩家视觉位置（平滑移动时镜头同步滑动）
         self._update_camera()
@@ -925,9 +927,14 @@ class PlayState(BaseState):
                 self._counted_kills.add(id(enemy))
                 # 商店经济：击杀掉落金币
                 self.player.gold += enemy.gold_reward
-                # 死亡动画演出：加入尸体列表，播完后消失
+                # 死亡动画演出：加入尸体列表，播完后消失。
+                # 防御：素材缺 death 帧表时不进演出列表（直接消失），避免卡尸
                 enemy.play_anim("death", restart=True)
-                if enemy.animator is not None and enemy not in self._dying:
+                if (
+                    enemy.animator is not None
+                    and enemy.animator.has("death")
+                    and enemy not in self._dying
+                ):
                     self._dying.append(enemy)
         # 战斗结束
         if self.battle.phase == TurnPhase.BATTLE_WON:
