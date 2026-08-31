@@ -1262,10 +1262,12 @@ class PlayState(BaseState):
         if self.battle:
             for enemy in self.battle.enemies:
                 if not enemy.stats.is_dead():
+                    enemy.facing_left = self.player.position.x < enemy.position.x
                     enemy.render(screen, cam_x, cam_y)
                     self._draw_enemy_overhead(screen, enemy, cam_x, cam_y)
         # 死亡演出中的尸体（死亡动画播放期间仍可见）
         for corpse in self._dying:
+            corpse.facing_left = self.player.position.x < corpse.position.x
             corpse.render(screen, cam_x, cam_y)
 
         # ---------- 第六层：玩家 ----------

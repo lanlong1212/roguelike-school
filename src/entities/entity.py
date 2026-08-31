@@ -144,6 +144,9 @@ class Entity:
         if self.animator is not None:
             frame = self.animator.surface
             if frame is not None:
+                # 朝向镜像：素材默认朝右，目标位于左侧时水平翻转（仅敌人设置）
+                if getattr(self, "facing_left", False):
+                    frame = self._mirror_frame(frame)
                 fw, fh = frame.get_size()
                 # 帧画布可宽于瓦片（横向攻击特效由加宽画布承载）：
                 # 水平居中、底边对齐（脚踩格底）；32x32 帧时偏移为 (0, 0)
@@ -160,6 +163,22 @@ class Entity:
         pygame.draw.rect(screen, self.color, rect, border_radius=6)
         # 黑色描边
         pygame.draw.rect(screen, config.BLACK, rect, 2, border_radius=6)
+
+    def _mirror_frame(self, frame: pygame.Surface) -> pygame.Surface:
+        """水平翻转动画帧（带缓存，避免每帧重复 flip）。
+
+        翻转不改变帧尺寸/透明度/缩放，仅镜像左右；上下方向保持原素材朝向。
+        缓存挂在实例的 _flip_cache（Enemy 提供），以原帧 id 为 key。
+        """
+        cache = getattr(self, "_flip_cache", None)
+        if cache is None:
+            return pygame.transform.flip(frame, True, False)
+        key = id(frame)
+        flipped = cache.get(key)
+        if flipped is None:
+            flipped = pygame.transform.flip(frame, True, False)
+            cache[key] = flipped
+        return flipped
 
     def __repr__(self) -> str:
         return (

@@ -55,6 +55,11 @@ class Enemy(Entity):
         # 本回合是否已攻击：攻击后 AI 移动节点不再走位，避免攻击动画
         # 起手即被后续走位的 walk 覆盖（演出上只见移动不见攻击）
         self.attacked_this_turn: bool = False
+        # 面朝方向：动画素材默认朝右，玩家在自身左侧时渲染前水平翻转镜像。
+        # 每帧由状态层根据玩家坐标更新（仅影响视觉，不影响移动/攻击/AI）。
+        self.facing_left: bool = False
+        # 翻转帧缓存：原帧 id → 翻转帧，避免同一帧每帧重复 flip
+        self._flip_cache: dict[int, "pygame.Surface"] = {}
 
     # ========== AI 接口（Day 6 实现） ==========
 
