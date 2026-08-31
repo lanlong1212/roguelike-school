@@ -19,7 +19,7 @@ import pygame
 from src.combat.action import AttackAction, EndTurnAction, MoveAction, SkillAction
 from src.combat.battle_manager import BattleManager, TurnPhase
 from src.combat.element import ELEMENT_COLOR, ELEMENT_NAME, REACTION_NAME, Element
-from src.combat.status_effect import EFFECT_DISPLAY_NAME
+from src.combat.status_effect import EFFECT_DISPLAY_NAME, EffectType
 from src.core import config
 from src.core import save_manager
 from src.core.asset_manager import resource_root
@@ -188,6 +188,8 @@ class PlayState(BaseState):
         self._rest_used: set[int] = set()
         # 玩家死亡演出：等待敌人攻击动画播完再跳结算（避免画面生硬）
         self._pending_lost: bool = False
+        # 阶段 3：可控伙伴（T 测试模式临时挂载；正式入口在阶段 6 休息房天赋）
+        self._companion = None  # Companion | None
 
     # ========== 生命周期 ==========
 
@@ -218,7 +220,40 @@ class PlayState(BaseState):
         }
         # 记录击杀计数集合清空（新会话内不追踪历史敌人 id）
         self._counted_kills.clear()
+        # 恢复伙伴（仅存活时创建并挂 AP 加成，防重复叠加）
+        self._restore_companion_from_save(data)
         self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
+
+    def _restore_companion_from_save(self, data) -> None:
+        """从存档恢复伙伴。
+
+        - 存档 ap_bonus_active=True（伙伴存活）→ 重建实体 + 恢复属性/位置/技能，
+          并在此处唯一地 +1 AP 上限（天赋重放不处理 summon_companion，不会叠加）。
+        - 伙伴死亡/从未召唤 → 不创建、不加 AP（死亡后本局永久消失）。
+        """
+        assert self.player is not None and self.floor is not None
+        if self._companion is not None:
+            return
+        c = data.get("companion")
+        if not c or not c.get("exists") or not c.get("ap_bonus_active"):
+            return
+        from src.entities.companion import Companion
+        companion = Companion(position=Vector2(c.get("x", 0), c.get("y", 0)))
+        companion.stats.max_hp = c.get("max_hp", 15)
+        companion.stats.hp = min(c.get("hp", 15), companion.stats.max_hp)
+        companion.stats.atk = c.get("atk", 3)
+        companion.stats.def_ = c.get("def_", 3)
+        # 位置校验：存档位置不可走（理论上同种子地图一致，保险兜底）→ 就近放玩家身边
+        if not self.floor.tilemap.is_walkable(companion.grid_x, companion.grid_y):
+            gx, gy = self._companion_spawn_position()
+            companion.move_to(gx, gy, instant=True)
+        for sid in c.get("skills", []):
+            if companion.get_skill(sid) is None:
+                companion.learn_skill(sid)
+        companion.alive = True
+        self._companion = companion
+        # 伙伴存活 → AP 上限 +1（与 _spawn_companion 同一处唯一加成点）
+        self.player.stats.max_ap += 1
 
     def exit(self):
         # 离开 PlayState（如暂停、切结算）时自动存档，形成检查点
@@ -226,7 +261,7 @@ class PlayState(BaseState):
             self._autosave()
 
     def _autosave(self) -> None:
-        """把当前进度写入存档。"""
+        """把当前进度写入存档（含伙伴状态）。"""
         if self.player is None or self.floor is None:
             return
         save_manager.save_game(
@@ -236,6 +271,7 @@ class PlayState(BaseState):
             pos=self.player.position,
             kills=self._kills,
             cleared_rooms=self._cleared_room_positions,
+            companion=self._companion,
         )
 
     # ========== 输入 ==========
@@ -309,13 +345,25 @@ class PlayState(BaseState):
                     if self.battle and self.battle.is_player_turn:
                         self.battle.end_player_turn()
                         self._after_player_action()
-                # 数字键 1-6 切换技能（6 个技能：2 物理 + 4 元素）
+                # Tab → 循环切换受控实体（主角 ↔ 伙伴；伙伴不存在/死亡时无效）
+                elif event.key == pygame.K_TAB and self.battle is not None:
+                    nxt = None
+                    if self.battle.current_actor is self.player:
+                        c = self.battle.companion
+                        if c is not None and c.alive:
+                            nxt = c
+                    elif self.battle.current_actor is self.battle.companion:
+                        nxt = self.player
+                    if nxt is not None:
+                        self._switch_actor(nxt)
+                # 数字键 1-6 切换技能（按当前受控实体的技能表）
                 elif event.key in (
                     pygame.K_1, pygame.K_2, pygame.K_3,
                     pygame.K_4, pygame.K_5, pygame.K_6,
                 ):
                     idx = int(pygame.key.name(event.key)) - 1
-                    if idx < len(self.player.skills):
+                    actor = self.battle.current_actor if self.battle else self.player
+                    if idx < len(actor.skills):
                         self._selected_skill_index = idx
                         self._compute_battle_highlights()
                 # M 键切回移动模式（不消耗 AP 选择）
@@ -344,7 +392,9 @@ class PlayState(BaseState):
                 self._rest_menu.handle_click(event.pos)
                 return
             if self.mode == PlayMode.BATTLE:
-                self._handle_battle_click(event.pos)
+                # 头像栏点击优先于战场点击（命中头像格时不再处理战场）
+                if not self._handle_actor_bar_click(event.pos):
+                    self._handle_battle_click(event.pos)
             else:
                 # 探索模式：点击商店/休息房间的地图图标进入
                 self._handle_explore_click(event.pos)
@@ -372,6 +422,9 @@ class PlayState(BaseState):
             if e.animator is not None and not e.animator.is_finished
         ]
         if self.battle is not None:
+            # 阶段 3/4：伙伴死亡 → 本局永久消失 + AP 上限回退
+            if self._companion is not None and not self._companion.alive:
+                self._on_companion_death()
             for e in self.battle.enemies:
                 if not e.stats.is_dead():
                     e.update_visual(dt)  # 平滑移动插值
@@ -379,6 +432,12 @@ class PlayState(BaseState):
                         e.animator.update(dt)
                         e.tick_idle(dt)  # 走完静止超时 → 回待机，避免原地踏步
                     e.tick_fx(dt)  # 子类特效层推进（Boss AOE 粒子）
+            # 阶段 3：伙伴动画推进（存活时；占位色块模式下 animator 为 None）
+            c = self.battle.companion
+            if c is not None and c.alive:
+                c.update_visual(dt)
+                if c.animator is not None:
+                    c.animator.update(dt)
 
         # 相机每帧跟随玩家视觉位置（平滑移动时镜头同步滑动）
         self._update_camera()
@@ -479,6 +538,8 @@ class PlayState(BaseState):
             self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
             self._update_camera()
             self._update_current_room()
+            # 伙伴同步跟随（若本步触发了战斗则内部自动跳过）
+            self._companion_follow_step()
             # 站在激活的阶梯上 → 下楼层
             if self._is_on_stair() and old_pos != self.player.grid_pos:
                 self._descend_floor()
@@ -520,6 +581,10 @@ class PlayState(BaseState):
         # 新楼层：清空休息房间状态
         self._rest_menu = None
         self._rest_used.clear()
+        # 伙伴换层：旧楼层坐标在新地图可能撞墙，直接放回玩家身边
+        if self._companion is not None:
+            gx, gy = self._companion_spawn_position()
+            self._companion.move_to(gx, gy, instant=True)
         self.floor.fog.update_visibility(self.player.position, tilemap=self.floor.tilemap)
         self._update_camera()
         self._update_current_room()
@@ -640,6 +705,9 @@ class PlayState(BaseState):
         if self.player is None or self._current_room is None:
             return
         if self.player.learn_talent(talent.id):
+            # 召唤伙伴：创建实体并挂载（AP 上限 +1 在 _spawn_companion 内处理）
+            if talent.id == "summon_companion":
+                self._spawn_companion()
             self._rest_used.add(id(self._current_room))
             self._rest_menu = None
             self._last_loot_desc = f"习得天赋：{talent.name}（{talent.desc}）"
@@ -703,7 +771,18 @@ class PlayState(BaseState):
                     enemy = Skeleton(position=Vector2(gx, gy))
                 enemies.append(_scaled(enemy))
 
-        self.battle = BattleManager(self.player, enemies, self.floor.tilemap)
+        # 阶段 3：战斗开始时把伙伴放到主角身边空位（探索中只保存引用，不参与渲染）
+        if self._companion is not None:
+            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                gx, gy = self.player.grid_x + dx, self.player.grid_y + dy
+                if self.floor.tilemap.is_walkable(gx, gy) and (gx, gy) not in {
+                    e.grid_pos for e in enemies
+                }:
+                    self._companion.position = Vector2(gx, gy)
+                    break
+        self.battle = BattleManager(
+            self.player, enemies, self.floor.tilemap, companion=self._companion
+        )
         self.mode = PlayMode.BATTLE
         self.player.stats.reset_ap()
         self.battle.last_action_desc = f"遭遇 {len(enemies)} 个敌人！"
@@ -716,13 +795,16 @@ class PlayState(BaseState):
         Day 5：攻击范围按当前选中技能的 range_cells 计算。
         """
         assert self.player and self.floor and self.battle
+        actor = self.battle.current_actor
         self._move_range.clear()
         self._attack_targets.clear()
 
-        start = self.player.grid_pos
-        move_range = self.player.stats.move_range
+        start = actor.grid_pos
+        move_range = actor.stats.move_range
         tilemap = self.floor.tilemap
         enemy_pos = {e.grid_pos: e for e in self.battle.enemies if not e.stats.is_dead()}
+        # 阶段 3：友方单位（除自己）位置不可停留，避免与伙伴/主角重叠
+        friendly_blocked = {e.grid_pos for e in self.battle.friendly_entities if e is not actor}
 
         # --- 移动范围 BFS（始终计算，M 键切移动模式时用） ---
         visited = {start: 0}
@@ -737,6 +819,9 @@ class PlayState(BaseState):
                 if (nx, ny) in visited:
                     continue
                 if not tilemap.is_walkable(nx, ny):
+                    continue
+                # 友方单位占据的格子不可进入（避免单位重叠）
+                if (nx, ny) in friendly_blocked:
                     continue
                 # 被敌人占据的格子不能移动到，但 BFS 可以穿过敌人记录距离
                 if (nx, ny) in enemy_pos:
@@ -753,11 +838,11 @@ class PlayState(BaseState):
         # _selected_skill_index = -1 表示纯移动模式，不显示攻击范围
         if self._selected_skill_index < 0:
             return
-        skills = self.player.skills
+        skills = actor.skills
         if self._selected_skill_index >= len(skills):
             return
         skill = skills[self._selected_skill_index]
-        bonus = (self.player.stats.attack_range - 1) if skill.id == "basic_attack" else 0
+        bonus = (actor.stats.attack_range - 1) if skill.id == "basic_attack" else 0
         attack_range = skill.range_cells + bonus
 
         # BFS 从玩家位置出发，找攻击范围内所有敌人
@@ -801,6 +886,14 @@ class PlayState(BaseState):
             and (int(center.x), int(center.y)) not in self._cleared_room_positions
         )
 
+    def _switch_actor(self, actor) -> bool:
+        """切换当前受控实体：成功则重置技能选中（默认第一技能）并重算高亮。"""
+        if self.battle is None or not self.battle.switch_actor(actor):
+            return False
+        self._selected_skill_index = 0  # 切到谁就默认选它的第一个技能
+        self._compute_battle_highlights()
+        return True
+
     def _handle_battle_click(self, mouse_pos: tuple[int, int]) -> None:
         """
         战斗中鼠标点击：
@@ -810,6 +903,7 @@ class PlayState(BaseState):
         assert self.player and self.floor and self.battle
         if not self.battle.is_player_turn:
             return
+        actor = self.battle.current_actor
         ts = config.TILE_SIZE
         cam_x, cam_y = self.camera.x, self.camera.y
         gx = int(mouse_pos[0] / ts + cam_x)
@@ -818,20 +912,20 @@ class PlayState(BaseState):
         # 点击可攻击格子 → AttackAction/SkillAction
         if (gx, gy) in self._attack_targets:
             target = self._attack_targets[(gx, gy)]
-            skills = self.player.skills
+            skills = actor.skills
             if 0 <= self._selected_skill_index < len(skills):
                 skill = skills[self._selected_skill_index]
                 # 战棋化：远程技能需视线无遮挡（相邻 1 格恒通过）
-                dist = max(abs(gx - self.player.grid_x), abs(gy - self.player.grid_y))
+                dist = max(abs(gx - actor.grid_x), abs(gy - actor.grid_y))
                 if dist > 1 and not self.floor.tilemap.has_line_of_sight(
-                    self.player.grid_x, self.player.grid_y, gx, gy
+                    actor.grid_x, actor.grid_y, gx, gy
                 ):
                     return
                 # AoE 副目标（火球溅射 / 雷击穿透）
                 secondaries = self._aoe_secondary_enemies(skill, target)
                 # Day 5 统一走 SkillAction（含基础攻击 1.0×），元素系统传入技能元素
                 action = SkillAction(
-                    actor=self.player,
+                    actor=actor,
                     target=target,
                     skill_id=skill.id,
                     multiplier=skill.multiplier,
@@ -839,13 +933,15 @@ class PlayState(BaseState):
                     skill_name=skill.name,
                     element=skill.element,
                     apply_effect=skill.apply_effect,
+                    effect_duration=skill.effect_duration,
+                    effect_chance=skill.effect_chance,
                 )
                 if self.battle.execute_action(action):
                     self._spawn_damage_floating_text()
                     # 副目标结算：不耗 AP、直接 execute（跳过回合切换检查）
                     for extra in secondaries:
                         extra_action = SkillAction(
-                            actor=self.player,
+                            actor=actor,
                             target=extra,
                             skill_id=skill.id,
                             multiplier=skill.multiplier,
@@ -853,6 +949,8 @@ class PlayState(BaseState):
                             skill_name=skill.name,
                             element=skill.element,
                             apply_effect=skill.apply_effect,
+                            effect_duration=skill.effect_duration,
+                            effect_chance=skill.effect_chance,
                         )
                         extra_action.execute(self.battle)
                         self._spawn_damage_floating_text()
@@ -860,24 +958,24 @@ class PlayState(BaseState):
             return
 
         # 点击可移动格子 → MoveAction
-        if (gx, gy) in self._move_range and (gx, gy) != self.player.grid_pos:
+        if (gx, gy) in self._move_range and (gx, gy) != actor.grid_pos:
             # 锁门：未清空战斗房前不可走出房间
             if self._is_battle_room_locked():
                 room = self._current_room
                 if room is not None and not room.contains(gx, gy):
                     sx = (
-                        (self.player.visual_pos.x - self.camera.x) * ts
+                        (actor.visual_pos.x - self.camera.x) * ts
                         + ts // 4
                     )
                     sy = (
-                        (self.player.visual_pos.y - self.camera.y) * ts
+                        (actor.visual_pos.y - self.camera.y) * ts
                         - 4
                     )
                     self._floating_texts.append(
                         FloatingText("消灭所有敌人后才能离开!", sx, sy, (255, 220, 120))
                     )
                     return
-            action = MoveAction(self.player, Vector2(gx, gy), ap_cost=1)
+            action = MoveAction(actor, Vector2(gx, gy), ap_cost=1)
             if self.battle.execute_action(action):
                 self._after_player_action()
             return
@@ -948,7 +1046,8 @@ class PlayState(BaseState):
             return set()
         if self.player is None or self.floor is None:
             return set()
-        skills = self.player.skills
+        actor = self.battle.current_actor
+        skills = actor.skills
         if not (0 <= self._selected_skill_index < len(skills)):
             return set()
         skill = skills[self._selected_skill_index]
@@ -963,7 +1062,7 @@ class PlayState(BaseState):
         if skill.aoe == "splash":
             return self._splash_cells((gx, gy))
         return set(self._line_beam_cells(
-            self.player.grid_pos, (gx, gy), skill.range_cells
+            actor.grid_pos, (gx, gy), skill.range_cells
         ))
 
     def _spawn_damage_floating_text(self) -> None:
@@ -1174,9 +1273,14 @@ class PlayState(BaseState):
         ts = config.TILE_SIZE
         tiles_x = config.SCREEN_WIDTH / ts
         tiles_y = config.SCREEN_HEIGHT / ts
-        # 跟随视觉坐标：平滑移动时镜头同步滑动
-        cam_target_x = self.player.visual_pos.x - tiles_x / 2
-        cam_target_y = self.player.visual_pos.y - tiles_y / 2
+        # 跟随受控实体：战斗时跟 current_actor（平滑移动时镜头同步滑动）
+        follow = (
+            self.battle.current_actor
+            if self.battle is not None and self.mode == PlayMode.BATTLE
+            else self.player
+        )
+        cam_target_x = follow.visual_pos.x - tiles_x / 2
+        cam_target_y = follow.visual_pos.y - tiles_y / 2
         max_cam_x = max(0, self.floor.map_width - tiles_x)
         max_cam_y = max(0, self.floor.map_height - tiles_y)
         self.camera.x = max(0, min(cam_target_x, max_cam_x))
@@ -1270,6 +1374,14 @@ class PlayState(BaseState):
             corpse.facing_left = self.player.position.x < corpse.position.x
             corpse.render(screen, cam_x, cam_y)
 
+        # ---------- 第五点五层：伙伴（战斗中出现；占位色块 + 头顶血条） ----------
+        if self.battle is not None:
+            c = self.battle.companion
+            if c is not None and c.alive:
+                c.facing_left = self.player.position.x < c.position.x
+                c.render(screen, cam_x, cam_y)
+                self._draw_enemy_overhead(screen, c, cam_x, cam_y)
+
         # ---------- 第六层：玩家 ----------
         self.player.render(screen, cam_x, cam_y)
 
@@ -1279,9 +1391,10 @@ class PlayState(BaseState):
 
         # ---------- 第八层：HUD ----------
         self.hud.draw(screen, self.game.font)
-        # 战斗模式：技能栏
+        # 战斗模式：技能栏 + 受控实体头像栏
         if self.mode == PlayMode.BATTLE:
             self._draw_skill_bar(screen)
+            self._draw_actor_bar(screen)
         # 背包界面
         if self._inventory_menu is not None:
             self._inventory_menu.update(0)
@@ -1382,10 +1495,126 @@ class PlayState(BaseState):
             text_surf = self.game.font.render(" ".join(labels), True, (255, 255, 255))
             screen.blit(text_surf, (sx + ts // 2 - text_surf.get_width() // 2, sy - 14))
 
+    # ========== 阶段 5：受控实体头像栏（主角 ↔ 伙伴） ==========
+
+    def _draw_actor_bar(self, screen) -> None:
+        """绘制底部头像栏：主角/伙伴头像 + HP 条 + 状态徽标。
+        选中者金色边框高亮；伙伴死亡后头像变灰（不可点击）。"""
+        if self.mode != PlayMode.BATTLE or self.battle is None:
+            return
+        bar_y = config.SCREEN_HEIGHT - 56
+        self._draw_actor_slot(screen, 10, bar_y, self.player, "玩", config.COLOR_PLAYER)
+        c = self.battle.companion
+        if c is not None:
+            # 存活 → 正常色块；死亡 → 灰化头像（点击命中但不切换，见 _handle_actor_bar_click）
+            self._draw_actor_slot(screen, 10 + 44 + 8, bar_y, c, "伴", config.COLOR_COMPANION)
+
+    def _draw_actor_slot(self, screen, x: int, bar_y: int, actor, label: str, color) -> None:
+        """画单个头像格（44×44）+ HP 条；选中者金色加粗边框 + 顶部三角；死亡灰化。"""
+        assert self.battle is not None and self.player is not None
+        size = 44
+        dead = actor.stats.hp <= 0
+        selected = (not dead) and self.battle.current_actor is actor
+        rect = pygame.Rect(x, bar_y, size, size)
+        bg = (70, 100, 65) if selected else (30, 30, 40)
+        pygame.draw.rect(screen, bg, rect, border_radius=6)
+        if selected:
+            border = config.COLOR_TEXT_HIGHLIGHT  # 金色边框高亮
+            pygame.draw.rect(screen, border, rect, 3, border_radius=6)
+            # 顶部小三角指示当前受控
+            tri = [
+                (rect.centerx - 6, rect.y - 6),
+                (rect.centerx + 6, rect.y - 6),
+                (rect.centerx, rect.y + 2),
+            ]
+            pygame.draw.polygon(screen, config.COLOR_TEXT_HIGHLIGHT, tri)
+        else:
+            border = (90, 90, 100) if dead else config.GRAY
+            pygame.draw.rect(screen, border, rect, 2, border_radius=6)
+        # 主体色块（占位头像）+ 名字首字；死亡时整体灰化
+        body_color = (60, 60, 60) if dead else color
+        pygame.draw.rect(screen, body_color, rect.inflate(-10, -10), border_radius=4)
+        if dead:
+            text = self.game.font_small.render("亡", True, (120, 120, 120))
+        else:
+            text = self.game.font_small.render(label, True, (255, 255, 255))
+        screen.blit(text, (rect.centerx - text.get_width() // 2, rect.y + 2))
+        # HP 条（格下方）；死亡为空条
+        hp_ratio = 0.0 if dead else max(0.0, actor.stats.hp / actor.stats.max_hp)
+        pygame.draw.rect(screen, (60, 20, 20), (rect.x + 2, rect.bottom + 2, size - 4, 4))
+        if hp_ratio > 0:
+            pygame.draw.rect(
+                screen, (120, 220, 120),
+                (rect.x + 2, rect.bottom + 2, int((size - 4) * hp_ratio), 4),
+            )
+        # 选中者右侧显示共享 AP（统一从主角池读取）
+        if selected:
+            ap_surf = self.game.font_small.render(
+                f"AP {self.player.stats.ap}/{self.player.stats.max_ap}",
+                True, (190, 220, 255),
+            )
+            screen.blit(ap_surf, (rect.right + 6, rect.centery - ap_surf.get_height() // 2))
+        # 状态徽标（头像格上方）：显示该实体当前挂载的状态效果
+        if not dead:
+            self._draw_status_badges(screen, rect, actor)
+
+    def _draw_status_badges(self, screen, rect: pygame.Rect, actor) -> None:
+        """在头像格上方画一排状态徽标（眩晕/护盾/减速等，每类 16×16 色块 + 首字）。"""
+        effects = actor.status_effects.all
+        if not effects:
+            return
+        badge_color = {
+            EffectType.STUN: (255, 200, 60),      # 眩晕：金黄
+            EffectType.SHIELD: (80, 160, 255),    # 护盾：蓝
+            EffectType.FREEZE: (170, 220, 255),   # 冻结：淡蓝
+            EffectType.SHOCK: (120, 200, 255),    # 感电：亮蓝
+            EffectType.DEF_DOWN: (255, 120, 80),  # 破甲：橙红
+            EffectType.SLOW: (180, 130, 255),     # 减速：紫
+            EffectType.MELT: (255, 90, 60),       # 融化：红橙
+            EffectType.OVERLOAD: (255, 150, 40),  # 超载：橙
+            EffectType.TAUNT: (255, 80, 80),      # 嘲讽：红
+        }
+        bsize = 16
+        gap = 2
+        y0 = rect.y - bsize - 3
+        for i, e in enumerate(effects[:4]):
+            bx = rect.x + i * (bsize + gap)
+            pygame.draw.rect(
+                screen, badge_color.get(e.effect_type, (200, 200, 200)),
+                (bx, y0, bsize, bsize), border_radius=3,
+            )
+            ch = EFFECT_DISPLAY_NAME.get(e.effect_type, "?")[0]
+            t = self.game.font_small.render(ch, True, (20, 20, 30))
+            screen.blit(t, (bx + bsize // 2 - t.get_width() // 2, y0 + 1))
+        if len(effects) > 4:
+            more = self.game.font_small.render(f"+{len(effects) - 4}", True, (230, 230, 230))
+            screen.blit(more, (rect.x + 4 * (bsize + gap) + 2, y0))
+
+    def _handle_actor_bar_click(self, mouse_pos) -> bool:
+        """点击头像格 → 切换受控实体；命中返回 True，未命中返回 False。
+        伙伴死亡后头像灰化：命中但不可切换（吞掉点击，避免误触战场）。"""
+        if self.mode != PlayMode.BATTLE or self.battle is None:
+            return False
+        bar_y = config.SCREEN_HEIGHT - 56
+        if pygame.Rect(10, bar_y, 44, 44).collidepoint(mouse_pos):
+            self._switch_actor(self.player)
+            return True
+        c = self.battle.companion
+        if c is not None:
+            if pygame.Rect(10 + 44 + 8, bar_y, 44, 44).collidepoint(mouse_pos):
+                if c.alive:
+                    self._switch_actor(c)
+                return True
+        return False
+
     def _draw_skill_bar(self, screen) -> None:
         """绘制技能选择栏：图形图标 + 快捷键角标；悬停图标显示技能说明。"""
         assert self.player
-        skills = self.player.skills
+        skills = (
+            self.battle.current_actor.skills
+            if self.battle is not None
+            else self.player.skills
+        )
         bar_y = 88  # Day 8：避开 HUD 的 HP/AP 条（8~76 像素）
         bar_x = 10
         slot_size = 46
@@ -1460,6 +1689,10 @@ class PlayState(BaseState):
             self._draw_sword(screen, cx, cy, (200, 200, 210))
         elif skill.id == "charge_slash":
             self._draw_sword(screen, cx, cy, (255, 160, 90), slash=True)
+        elif skill.id == "taunt":
+            self._draw_shield(screen, cx, cy, (255, 120, 120))
+        elif skill.id == "shield_bash":
+            self._draw_shield(screen, cx, cy, (230, 190, 120), bash=True)
         elif skill.element is Element.FIRE:
             self._draw_flame(screen, cx, cy, ELEMENT_COLOR[Element.FIRE])
         elif skill.element is Element.ICE:
@@ -1483,6 +1716,18 @@ class PlayState(BaseState):
             # 斜斩：两道交叉弧线（简单用斜线模拟挥砍轨迹）
             pygame.draw.line(screen, color, (cx - 11, cy + 9), (cx + 9, cy - 11), 3)
             pygame.draw.line(screen, color, (cx - 7, cy + 11), (cx + 11, cy - 7), 3)
+
+    @staticmethod
+    def _draw_shield(screen, cx: int, cy: int, color, bash: bool = False) -> None:
+        """盾牌图标。bash=True 时加白色撞击斜线（盾击）。"""
+        points = [
+            (cx - 12, cy - 10), (cx + 12, cy - 10),
+            (cx + 8, cy + 6), (cx, cy + 14), (cx - 8, cy + 6),
+        ]
+        pygame.draw.polygon(screen, color, points)
+        pygame.draw.polygon(screen, (20, 20, 30), points, 2)
+        if bash:
+            pygame.draw.line(screen, (255, 255, 255), (cx - 11, cy + 11), (cx + 11, cy - 11), 3)
 
     @staticmethod
     def _draw_flame(screen, cx: int, cy: int, color) -> None:
@@ -1619,6 +1864,65 @@ class PlayState(BaseState):
         """关闭背包界面（B 键 / 关闭按钮 / Esc 共用的单一出口）。"""
         self._inventory_menu = None
 
+    # ========== 伙伴生命周期（阶段 4：AP 上限 +1 / 死亡回退） ==========
+
+    def _companion_spawn_position(self) -> tuple[int, int]:
+        """找玩家身边可走空位放置伙伴（优先右侧；全堵回退玩家脚下）。
+
+        召唤发生在探索模式（无敌人），只需校验可行走；战斗内放置
+        由 _start_battle 按敌人占位进一步排除。
+        """
+        assert self.player and self.floor
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            gx, gy = self.player.grid_x + dx, self.player.grid_y + dy
+            if self.floor.tilemap.is_walkable(gx, gy):
+                return gx, gy
+        return self.player.grid_x, self.player.grid_y
+
+    def _spawn_companion(self) -> None:
+        """创建伙伴并挂载（测试模式 / 休息房天赋共用入口）。召唤伙伴 → AP 上限 +1。"""
+        from src.entities.companion import Companion
+        if self._companion is not None:
+            return
+        gx, gy = self._companion_spawn_position()
+        self._companion = Companion(position=Vector2(gx, gy))
+        # 上限 +1；当前剩余 AP 不补（避免白赚行动点），下回合重置后生效
+        self.player.stats.max_ap += 1
+
+    def _companion_follow_step(self) -> None:
+        """探索模式下伙伴自动跟随：玩家每走一步，伙伴沿 BFS 最短路径走一步。
+
+        保证伙伴不掉队（否则进入新房间触发战斗时，_start_battle 按玩家身边
+        空位放置伙伴会因敌人占位失败，导致伙伴以旧房间坐标参战卡死）。
+        战斗内/已在玩家身边（含对角、同格）时跳过。
+        """
+        assert self.player is not None and self.floor is not None
+        c = self._companion
+        if c is None or self.battle is not None or self.mode != PlayMode.EXPLORE:
+            return
+        if not c.alive:
+            return
+        if max(abs(c.grid_x - self.player.grid_x), abs(c.grid_y - self.player.grid_y)) <= 1:
+            return
+        path = self.floor.tilemap.find_path(
+            (c.grid_x, c.grid_y), (self.player.grid_x, self.player.grid_y)
+        )
+        if len(path) > 1:
+            nx, ny = path[1]
+            c.move_to(nx, ny, instant=True)
+            if c.animator is not None:
+                c.play_anim("walk")
+
+    def _on_companion_death(self) -> None:
+        """伙伴死亡：本局永久消失，AP 上限回退到基线，并钳制当前 AP 不超上限。"""
+        if self._companion is None:
+            return
+        self._companion = None
+        self.player.stats.max_ap = max(config.AP_MAX, self.player.stats.max_ap - 1)
+        if self.player.stats.ap > self.player.stats.max_ap:
+            self.player.stats.ap = self.player.stats.max_ap
+        self._last_loot_desc = "伙伴阵亡了，AP 上限回退"
+
     def _toggle_test_mode(self) -> None:
         """Day 9：切换测试模式，送全套物品用于测试装备系统。"""
         self._test_mode = not self._test_mode
@@ -1631,6 +1935,14 @@ class PlayState(BaseState):
             self.player.inventory.add(HealthPotion())
             self.player.inventory.add(StrengthPotion())
             self.player.gold += 100  # 商店经济：送金币便于测试购买
-            self._last_loot_desc = "[测试模式] 已获得全套物品+100金币，按 I 打开背包"
+            # 阶段 3/4：测试模式挂载伙伴（正式入口在阶段 6 休息房天赋）
+            if self._companion is None:
+                self._spawn_companion()
+                if self._companion is not None:
+                    # 测试模式顺带学盾击，便于本阶段验收两个伙伴技能
+                    self._companion.learn_skill("shield_bash")
+                self._last_loot_desc = "[测试模式] 全套物品+100金币+伙伴(嘲讽+盾击)，按 I 开背包"
+            else:
+                self._last_loot_desc = "[测试模式] 已获得全套物品+100金币，按 I 开背包"
         else:
             self._last_loot_desc = "[测试模式] 关闭"

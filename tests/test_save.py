@@ -159,3 +159,77 @@ def test_no_save_returns_none():
         assert save_manager.load_game() is None
     finally:
         guard.cleanup()
+
+
+def test_companion_save_roundtrip():
+    """存活伙伴：存档写入属性/位置/技能；AP 加成标志为 True。"""
+    from src.core import config
+    from src.entities.companion import Companion
+    guard = _SaveDirGuard()
+    try:
+        p = _make_player()
+        c = Companion(position=Vector2(5, 6))
+        c.learn_skill("shield_bash")
+        c.stats.hp = 10
+        c.stats.max_hp = 18  # 模拟成长
+        p.stats.max_ap = config.AP_MAX + 1  # 伙伴加成
+        save_manager.save_game(
+            player=p, level=3, floor_seed=12345,
+            pos=Vector2(12, 34), kills=8, companion=c,
+        )
+        data = save_manager.load_game()
+        comp = data["companion"]
+        assert comp["exists"] is True
+        assert comp["alive"] is True
+        assert comp["ap_bonus_active"] is True
+        assert comp["x"] == 5 and comp["y"] == 6
+        assert comp["hp"] == 10 and comp["max_hp"] == 18
+        assert comp["atk"] == 3 and comp["def_"] == 3
+        assert comp["skills"] == ["taunt", "shield_bash"]
+    finally:
+        guard.cleanup()
+
+
+def test_companion_death_saved_and_not_revived():
+    """伙伴死亡：存档 alive=False、ap_bonus_active=False（读档不复活、不加 AP）。"""
+    from src.entities.companion import Companion
+    guard = _SaveDirGuard()
+    try:
+        p = _make_player()
+        c = Companion(position=Vector2(5, 6))
+        c.alive = False
+        c.stats.hp = 0
+        save_manager.save_game(
+            player=p, level=3, floor_seed=12345,
+            pos=Vector2(12, 34), kills=8, companion=c,
+        )
+        data = save_manager.load_game()
+        comp = data["companion"]
+        assert comp["exists"] is True
+        assert comp["alive"] is False
+        assert comp["ap_bonus_active"] is False
+    finally:
+        guard.cleanup()
+
+
+def test_summon_talent_replay_no_ap_duplicate():
+    """读档重放 summon_companion 天赋不叠加 AP（加成只由伙伴存活决定，
+    _apply_talent_effect 对召唤天赋无属性分支，实体恢复才 +1）。"""
+    from src.core import config
+    guard = _SaveDirGuard()
+    try:
+        p = _make_player()
+        p.learn_talent("summon_companion")
+        _do_save(p)
+
+        fresh = Player()
+        fresh.stats.max_hp = 20
+        data = save_manager.load_game()
+        save_manager.apply_save_to_player(fresh, data)
+
+        # 天赋重放只记录已学，不改变 AP（伙伴实体由 play_state 恢复层挂载）
+        assert fresh.stats.max_ap == config.AP_MAX
+        assert "summon_companion" in fresh.talents
+        assert all(t.id != "summon_companion" for t in fresh.unlearned_talents())
+    finally:
+        guard.cleanup()

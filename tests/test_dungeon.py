@@ -132,3 +132,40 @@ def test_same_seed_reproducible():
                 f"同 seed 地图不一致 at ({x},{y})"
             )
     assert a.player_spawn == b.player_spawn
+
+
+def test_find_path_basic():
+    """find_path：直线可达/绕墙/不可达/越界/起点墙/同点。"""
+    from src.world.tilemap import TileMap
+    tm = TileMap(10, 10)
+    tm.fill_rect(1, 1, 8, 8, TileType.FLOOR)
+    tm.fill_rect(4, 1, 4, 6, TileType.WALL)  # 中间立墙，必须绕行
+    path = tm.find_path((1, 1), (8, 8))
+    assert path[0] == (1, 1) and path[-1] == (8, 8)
+    assert all(tm.is_walkable(gx, gy) for gx, gy in path)
+    assert (4, 3) not in path  # 路径不能穿墙
+    # 同点
+    assert tm.find_path((1, 1), (1, 1)) == [(1, 1)]
+    # 起点在墙里 → 空
+    assert tm.find_path((4, 1), (1, 1)) == []
+    # 越界 → 空
+    assert tm.find_path((-1, 0), (1, 1)) == []
+    # 目标在墙里 → 空
+    assert tm.find_path((1, 1), (4, 1)) == []
+    # 全墙 → 不可达
+    tm2 = TileMap(5, 5)
+    tm2.fill_rect(0, 0, 4, 4, TileType.WALL)
+    assert tm2.find_path((1, 1), (3, 3)) == []
+
+
+def test_find_path_across_rooms():
+    """真实地牢中：出生点到所有房间中心 find_path 可达（跟随不掉队的前提）。"""
+    for seed in SEEDS:
+        floor = Floor(level=1, seed=seed)
+        start = (int(floor.player_spawn.x), int(floor.player_spawn.y))
+        for room in floor.rooms:
+            c = room.center()
+            tx, ty = int(c.x), int(c.y)
+            path = floor.tilemap.find_path(start, (tx, ty))
+            assert path and path[-1] == (tx, ty), f"seed={seed} 到 {tx},{ty} 不可达"
+            assert all(floor.tilemap.is_walkable(gx, gy) for gx, gy in path)

@@ -80,6 +80,46 @@ class TileMap:
         t = self.get_tile(gx, gy)
         return t in (TileType.FLOOR, TileType.DOOR, TileType.TRAP, TileType.STAIR)
 
+    # ========== 路径查找 ==========
+
+    def find_path(
+        self,
+        start: tuple[int, int],
+        goal: tuple[int, int],
+    ) -> list[tuple[int, int]]:
+        """BFS 最短路径（4 方向）。返回含起终点的格子序列；不可达返回 []。"""
+        from collections import deque
+        if start == goal:
+            return [start]
+        if not self.in_bounds(*start) or not self.in_bounds(*goal):
+            return []
+        if not self.is_walkable(*start) or not self.is_walkable(*goal):
+            return []
+        prev = {start: None}
+        queue = deque([start])
+        while queue:
+            cur = queue.popleft()
+            if cur == goal:
+                break
+            cx, cy = cur
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nxt = (cx + dx, cy + dy)
+                if nxt in prev:
+                    continue
+                if not self.is_walkable(nxt[0], nxt[1]):
+                    continue
+                prev[nxt] = cur
+                queue.append(nxt)
+        if goal not in prev:
+            return []
+        path = []
+        cur = goal
+        while cur is not None:
+            path.append(cur)
+            cur = prev[cur]
+        path.reverse()
+        return path
+
     # ========== 战棋视线判定 ==========
 
     def _line_cells(self, x0: int, y0: int, x1: int, y1: int):

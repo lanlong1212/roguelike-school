@@ -78,6 +78,29 @@ def _serialize_inventory(player) -> tuple[list, str | None]:
     return items, equipped_id
 
 
+def _serialize_companion(companion) -> dict:
+    """序列化伙伴状态。
+
+    ap_bonus_active 与伙伴存活绑定（伙伴死亡后 AP 上限加成已回退），
+    读档时据此决定是否重新挂载伙伴并 +1 AP——保证不重复叠加。
+    """
+    if companion is None:
+        return {"exists": False, "alive": False, "ap_bonus_active": False}
+    alive = companion.alive and not companion.stats.is_dead()
+    return {
+        "exists": True,
+        "alive": alive,
+        "ap_bonus_active": alive,
+        "x": int(companion.grid_x),
+        "y": int(companion.grid_y),
+        "hp": companion.stats.hp,
+        "max_hp": companion.stats.max_hp,
+        "atk": companion.stats.atk,
+        "def_": companion.stats.def_,
+        "skills": [s.id for s in companion.skills],
+    }
+
+
 # ========== 公开接口 ==========
 
 def save_game(
@@ -87,8 +110,13 @@ def save_game(
     pos,
     kills: int,
     cleared_rooms=None,
+    companion=None,
 ) -> None:
-    """把当前游戏进度写入存档。cleared_rooms 为已清空房间中心坐标集合。"""
+    """把当前游戏进度写入存档。cleared_rooms 为已清空房间中心坐标集合。
+
+    companion 为当前伙伴实体（可为 None）；死亡伙伴记录 alive=False，
+    读档时不复活、不叠加 AP 加成。
+    """
     items, equipped_id = _serialize_inventory(player)
     data = {
         "version": 1,
@@ -106,6 +134,7 @@ def save_game(
         "equipped_weapon": equipped_id,
         "kills": kills,
         "cleared_rooms": [list(c) for c in (cleared_rooms or set())],
+        "companion": _serialize_companion(companion),
     }
     _ensure_dir()
     tmp = SAVE_FILE + ".tmp"
