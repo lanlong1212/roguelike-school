@@ -33,17 +33,17 @@ def _distance(a: "Entity", b: "Entity") -> int:
 # ========== 近战 AI ==========
 
 def _is_player_in_attack_range(actor: "Entity", ctx: "BattleManager") -> bool:
-    """玩家在相邻 1 格（切比雪夫距离 <= 1）。"""
-    return _distance(actor, ctx.player) <= 1
+    """目标在相邻 1 格（切比雪夫距离 <= 1）。"""
+    return _distance(actor, ctx.attack_target(actor)) <= 1
 
 
 def _attack_player(actor: "Entity", ctx: "BattleManager") -> bool:
-    """对玩家执行攻击。"""
+    """对当前目标执行攻击。"""
     if actor.stats.ap < 2:
         return False
     action = AttackAction(
         actor=actor,
-        target=ctx.player,
+        target=ctx.attack_target(actor),
         ap_cost=2,
         multiplier=1.0,
         skill_name="撕咬",
@@ -52,13 +52,14 @@ def _attack_player(actor: "Entity", ctx: "BattleManager") -> bool:
 
 
 def _move_toward_player(actor: "Entity", ctx: "BattleManager") -> bool:
-    """朝玩家方向移动 1 格（贪心：先 dx 后 dy）。本回合已攻击则不再走位。"""
+    """朝当前目标方向移动 1 格（贪心：先 dx 后 dy）。本回合已攻击则不再走位。"""
     if actor.stats.ap < 1 or getattr(actor, "attacked_this_turn", False):
         return False
-    dx = _sign(ctx.player.grid_x - actor.grid_x)
-    dy = _sign(ctx.player.grid_y - actor.grid_y)
+    target = ctx.attack_target(actor)
+    dx = _sign(target.grid_x - actor.grid_x)
+    dy = _sign(target.grid_y - actor.grid_y)
     # 优先走距离差更大的轴
-    if abs(ctx.player.grid_x - actor.grid_x) >= abs(ctx.player.grid_y - actor.grid_y):
+    if abs(target.grid_x - actor.grid_x) >= abs(target.grid_y - actor.grid_y):
         if dx != 0 and _try_move(actor, ctx, dx, 0):
             return True
         if dy != 0 and _try_move(actor, ctx, 0, dy):
@@ -76,8 +77,8 @@ def _try_move(actor: "Entity", ctx: "BattleManager", dx: int, dy: int) -> bool:
     nx, ny = actor.grid_x + dx, actor.grid_y + dy
     if not ctx.tilemap.is_walkable(nx, ny):
         return False
-    # 不能踩在玩家或其他敌人身上
-    if (nx, ny) == ctx.player.grid_pos:
+    # 不能踩在友方单位（玩家/伙伴）或其他敌人身上
+    if any(e.grid_pos == (nx, ny) for e in ctx.friendly_entities):
         return False
     for e in ctx.enemies:
         if e is not actor and not e.stats.is_dead() and e.grid_pos == (nx, ny):
@@ -115,26 +116,27 @@ def create_melee_ai() -> BehaviorTree:
 # ========== 远程 AI ==========
 
 def _is_player_in_ranged_range(actor: "Entity", ctx: "BattleManager") -> bool:
-    """玩家在 4 格内且视线无遮挡（障碍柱/墙会挡箭）。"""
-    if _distance(actor, ctx.player) > 4:
+    """目标在 4 格内且视线无遮挡（障碍柱/墙会挡箭）。"""
+    target = ctx.attack_target(actor)
+    if _distance(actor, target) > 4:
         return False
     return ctx.tilemap.has_line_of_sight(
-        actor.grid_x, actor.grid_y, ctx.player.grid_x, ctx.player.grid_y
+        actor.grid_x, actor.grid_y, target.grid_x, target.grid_y
     )
 
 
 def _is_player_too_close(actor: "Entity", ctx: "BattleManager") -> bool:
-    """玩家太近（2 格内）需要后退。"""
-    return _distance(actor, ctx.player) <= 2
+    """目标太近（2 格内）需要后退。"""
+    return _distance(actor, ctx.attack_target(actor)) <= 2
 
 
 def _ranged_attack(actor: "Entity", ctx: "BattleManager") -> bool:
-    """远程攻击玩家。"""
+    """远程攻击当前目标。"""
     if actor.stats.ap < 2:
         return False
     action = AttackAction(
         actor=actor,
-        target=ctx.player,
+        target=ctx.attack_target(actor),
         ap_cost=2,
         multiplier=1.0,
         skill_name="射箭",
@@ -143,11 +145,12 @@ def _ranged_attack(actor: "Entity", ctx: "BattleManager") -> bool:
 
 
 def _move_away_from_player(actor: "Entity", ctx: "BattleManager") -> bool:
-    """远离玩家 1 格。"""
+    """远离当前目标 1 格。"""
     if actor.stats.ap < 1:
         return False
-    dx = _sign(actor.grid_x - ctx.player.grid_x)
-    dy = _sign(actor.grid_y - ctx.player.grid_y)
+    target = ctx.attack_target(actor)
+    dx = _sign(actor.grid_x - target.grid_x)
+    dy = _sign(actor.grid_y - target.grid_y)
     if dx != 0 and _try_move(actor, ctx, dx, 0):
         return True
     if dy != 0 and _try_move(actor, ctx, 0, dy):

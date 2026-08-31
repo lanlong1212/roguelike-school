@@ -7,12 +7,13 @@
 技能：
     taunt        嘲讽    1 AP  3 格  无伤害，施加"嘲讽"状态强制敌人攻击伙伴
     shield_bash  盾击    2 AP  1 格  0.8× 物理伤害，50% 眩晕 1 回合
-说明：本模块只做数据层（实体 + 技能配置），
-      技能执行/嘲讽状态效果在阶段 4 接入，暂不定义。
+说明：本模块做数据层（实体 + 技能配置），技能执行与状态
+      效果已由 SkillAction / StatusEffect 链路支持（阶段 4）。
 """
 from __future__ import annotations
 
 from src.combat.element import Element
+from src.combat.status_effect import EffectType
 from src.core import config
 from src.entities.entity import Entity
 from src.entities.player import Skill 
@@ -21,7 +22,7 @@ from src.utils.vector import Vector2
 
 
 # ========== 伙伴技能池 ==========
-# multiplier=0.0 的嘲讽暂无伤害，其"嘲讽状态"效果阶段 4 实现
+# 嘲讽 multiplier=0.0 无伤害，仅附加"嘲讽"状态（AI 强制以伙伴为目标）
 _COMPANION_SKILLS: list[Skill] = [
     Skill(
         id="taunt",
@@ -31,6 +32,8 @@ _COMPANION_SKILLS: list[Skill] = [
         multiplier=0.0,
         desc="嘲讽 3 格内敌人，强制其 2 回合内攻击伙伴",
         element=Element.NONE,
+        apply_effect=EffectType.TAUNT,
+        effect_duration=2,
     ),
     Skill(
         id="shield_bash",
@@ -40,6 +43,9 @@ _COMPANION_SKILLS: list[Skill] = [
         multiplier=0.8,
         desc="对相邻敌人造成 ATK×0.8 物理伤害，50% 概率眩晕 1 回合",
         element=Element.NONE,
+        apply_effect=EffectType.STUN,
+        effect_duration=1,
+        effect_chance=0.5,
     ),
 ]
 

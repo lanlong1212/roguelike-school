@@ -40,7 +40,7 @@ def _elite_move(actor: "Entity", ctx: "BattleManager", dx: int, dy: int) -> bool
     nx, ny = actor.grid_x + dx, actor.grid_y + dy
     if not ctx.tilemap.is_walkable(nx, ny):
         return False
-    if (nx, ny) == ctx.player.grid_pos:
+    if any(e.grid_pos == (nx, ny) for e in ctx.friendly_entities):
         return False
     for e in ctx.enemies:
         if e is not actor and not e.stats.is_dead() and e.grid_pos == (nx, ny):
@@ -50,12 +50,13 @@ def _elite_move(actor: "Entity", ctx: "BattleManager", dx: int, dy: int) -> bool
 
 
 def _elite_move_toward_player(actor: "Entity", ctx: "BattleManager") -> bool:
-    """朝玩家移动 1 格。本回合已攻击则不再走位。"""
+    """朝当前目标移动 1 格。本回合已攻击则不再走位。"""
     if actor.stats.ap < 1 or getattr(actor, "attacked_this_turn", False):
         return False
-    dx = _sign(ctx.player.grid_x - actor.grid_x)
-    dy = _sign(ctx.player.grid_y - actor.grid_y)
-    if abs(ctx.player.grid_x - actor.grid_x) >= abs(ctx.player.grid_y - actor.grid_y):
+    target = ctx.attack_target(actor)
+    dx = _sign(target.grid_x - actor.grid_x)
+    dy = _sign(target.grid_y - actor.grid_y)
+    if abs(target.grid_x - actor.grid_x) >= abs(target.grid_y - actor.grid_y):
         if dx != 0 and _elite_move(actor, ctx, dx, 0):
             return True
         if dy != 0 and _elite_move(actor, ctx, 0, dy):
@@ -69,11 +70,12 @@ def _elite_move_toward_player(actor: "Entity", ctx: "BattleManager") -> bool:
 
 
 def _elite_move_away(actor: "Entity", ctx: "BattleManager") -> bool:
-    """远离玩家 1 格。本回合已攻击则不再走位。"""
+    """远离当前目标 1 格。本回合已攻击则不再走位。"""
     if actor.stats.ap < 1 or getattr(actor, "attacked_this_turn", False):
         return False
-    dx = _sign(actor.grid_x - ctx.player.grid_x)
-    dy = _sign(actor.grid_y - ctx.player.grid_y)
+    target = ctx.attack_target(actor)
+    dx = _sign(actor.grid_x - target.grid_x)
+    dy = _sign(actor.grid_y - target.grid_y)
     if dx != 0 and _elite_move(actor, ctx, dx, 0):
         return True
     if dy != 0 and _elite_move(actor, ctx, 0, dy):
@@ -82,11 +84,11 @@ def _elite_move_away(actor: "Entity", ctx: "BattleManager") -> bool:
 
 
 def _elite_ranged_attack(actor: "Entity", ctx: "BattleManager", multiplier: float, name: str) -> bool:
-    """远程攻击玩家（2 AP）。"""
+    """远程攻击当前目标（2 AP）。"""
     if actor.stats.ap < 2:
         return False
     action = AttackAction(
-        actor=actor, target=ctx.player, ap_cost=2,
+        actor=actor, target=ctx.attack_target(actor), ap_cost=2,
         multiplier=multiplier, skill_name=name,
     )
     return ctx.execute_enemy_action(actor, action)
@@ -95,16 +97,17 @@ def _elite_ranged_attack(actor: "Entity", ctx: "BattleManager", multiplier: floa
 # ========== 阶段 1：远程消耗 ==========
 
 def _is_player_in_range1(actor: "Entity", ctx: "BattleManager") -> bool:
-    """玩家在射程内且视线无遮挡（障碍柱/墙会挡能量箭）。"""
-    if _distance(actor, ctx.player) > 4:
+    """目标在射程内且视线无遮挡（障碍柱/墙会挡能量箭）。"""
+    target = ctx.attack_target(actor)
+    if _distance(actor, target) > 4:
         return False
     return ctx.tilemap.has_line_of_sight(
-        actor.grid_x, actor.grid_y, ctx.player.grid_x, ctx.player.grid_y
+        actor.grid_x, actor.grid_y, target.grid_x, target.grid_y
     )
 
 
 def _is_player_too_close1(actor: "Entity", ctx: "BattleManager") -> bool:
-    return _distance(actor, ctx.player) <= 2
+    return _distance(actor, ctx.attack_target(actor)) <= 2
 
 
 def _attack_ranged1(actor: "Entity", ctx: "BattleManager") -> bool:
@@ -160,7 +163,7 @@ def _elite_summon(actor: "Entity", ctx: "BattleManager") -> bool:
         nx, ny = actor.grid_x + dx, actor.grid_y + dy
         if not ctx.tilemap.is_walkable(nx, ny):
             continue
-        if (nx, ny) == ctx.player.grid_pos:
+        if any(e.grid_pos == (nx, ny) for e in ctx.friendly_entities):
             continue
         if any(
             e is not actor and not e.stats.is_dead() and e.grid_pos == (nx, ny)
@@ -207,7 +210,7 @@ def create_elite_phase2_tree() -> BehaviorTree:
 # ========== 阶段 3：狂暴 ==========
 
 def _is_player_adjacent3(actor: "Entity", ctx: "BattleManager") -> bool:
-    return _distance(actor, ctx.player) <= 1
+    return _distance(actor, ctx.attack_target(actor)) <= 1
 
 
 def _berserk_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
@@ -217,8 +220,9 @@ def _berserk_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     """
     if actor.stats.ap < 2:
         return False
+    target = ctx.attack_target(actor)
     action = AttackAction(
-        actor=actor, target=ctx.player, ap_cost=2,
+        actor=actor, target=target, ap_cost=2,
         multiplier=1.6, skill_name="狂暴连击一",
     )
     ok = ctx.execute_enemy_action(actor, action)
@@ -226,7 +230,7 @@ def _berserk_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
         return False
     if actor.stats.ap >= 2:
         action2 = AttackAction(
-            actor=actor, target=ctx.player, ap_cost=2,
+            actor=actor, target=target, ap_cost=2,
             multiplier=1.3, skill_name="狂暴连击二",
         )
         ctx.execute_enemy_action(actor, action2)

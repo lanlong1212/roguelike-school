@@ -74,6 +74,17 @@ class BattleManager:
             return [self.player, self.companion]
         return [self.player]
 
+    def attack_target(self, enemy: Entity) -> Entity:
+        """
+        敌人 AI 的当前攻击目标（仇恨系统，阶段 4）。
+        敌人带"嘲讽"状态且伙伴存活 → 强制以伙伴为目标；否则以玩家为目标。
+        伙伴死亡后嘲讽失效，自动回退打玩家。
+        """
+        if enemy.status_effects.has(EffectType.TAUNT):
+            if self.companion is not None and self.companion.alive:
+                return self.companion
+        return self.player
+
     def switch_actor(self, actor: Entity) -> bool:
         """
         切换当前受控实体（主角 ↔ 伙伴）。
@@ -113,6 +124,8 @@ class BattleManager:
         self.player.stats.spend_ap(action.ap_cost)
         # 执行行动效果
         action.execute(self)
+        # 行动可能造成伙伴阵亡（AoE 溅射等）：标记死亡并切回主角
+        self._handle_companion_death()
 
         # 执行后检查胜负
         if self._check_player_won():
@@ -142,7 +155,18 @@ class BattleManager:
             return False
         actor.stats.spend_ap(action.ap_cost)
         action.execute(self)
+        # 敌人行动可能击倒伙伴：标记死亡，后续敌人不再以尸体为目标
+        self._handle_companion_death()
         return True
+
+    def _handle_companion_death(self) -> None:
+        """伙伴 HP 归零：标记 alive=False（敌人目标选择/受控切换据此排除），
+        若当前受控实体是伙伴则切回主角。AP 上限回退由 play_state 处理。"""
+        c = self.companion
+        if c is not None and c.alive and c.stats.is_dead():
+            c.alive = False
+            if self.current_actor is c:
+                self.current_actor = self.player
 
     def end_player_turn(self) -> None:
         """玩家主动结束回合。"""

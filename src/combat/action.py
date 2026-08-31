@@ -9,6 +9,7 @@ Day 5 扩展：
 """
 from __future__ import annotations
 
+import random
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -123,6 +124,8 @@ class SkillAction(Action):
         skill_name: str = "技能",
         element: Element = Element.NONE,
         apply_effect: "EffectType | None" = None,
+        effect_duration: int = 1,
+        effect_chance: float = 1.0,
     ):
         super().__init__(actor, ap_cost)
         self.target = target
@@ -131,6 +134,8 @@ class SkillAction(Action):
         self.skill_name = skill_name
         self.element = element
         self.apply_effect = apply_effect
+        self.effect_duration = effect_duration
+        self.effect_chance = effect_chance
 
     def execute(self, manager: "BattleManager") -> None:
         if self.target is None:
@@ -144,22 +149,41 @@ class SkillAction(Action):
         # 标记本回合已攻击（同 AttackAction，防止后续走位打断攻击动画）
         if hasattr(self.actor, "attacked_this_turn"):
             self.actor.attacked_this_turn = True
-        # 与 AttackAction 共用伤害逻辑（含元素附着/反应/护盾）
-        result = apply_damage(self.actor, self.target, self.multiplier, self.element)
-        crit_str = " 暴击!" if result.is_crit else ""
-        reaction_str = f" 触发{REACTION_NAME[result.reaction]}!" if result.reaction else ""
+        # 无伤害技能（如嘲讽 multiplier=0.0）：跳过伤害结算，仅附加状态
+        result = None
+        if self.multiplier > 0:
+            result = apply_damage(self.actor, self.target, self.multiplier, self.element)
+        crit_str = " 暴击!" if result is not None and result.is_crit else ""
+        reaction_str = (
+            f" 触发{REACTION_NAME[result.reaction]}!"
+            if result is not None and result.reaction else ""
+        )
+        # 附加状态：按概率触发，持续 effect_duration 回合（寒冰箭减速 / 嘲讽 / 盾击眩晕）
         effect_str = ""
-        if self.apply_effect is not None and not self.target.stats.is_dead():
+        if (
+            self.apply_effect is not None
+            and not self.target.stats.is_dead()
+            and random.random() < self.effect_chance
+        ):
             self.target.status_effects.add(
-                StatusEffect(self.apply_effect, duration=1, source_name=self.skill_name)
+                StatusEffect(
+                    self.apply_effect,
+                    duration=self.effect_duration,
+                    source_name=self.skill_name,
+                )
             )
             effect_str = f" 附加{EFFECT_DISPLAY_NAME[self.apply_effect]}"
-        manager.last_action_desc = (
-            f"{self.actor.name} 释放 {self.skill_name} → "
-            f"{self.target.name} -{result.damage} HP{crit_str}{reaction_str}{effect_str}"
-        )
+        if result is not None:
+            manager.last_action_desc = (
+                f"{self.actor.name} 释放 {self.skill_name} → "
+                f"{self.target.name} -{result.damage} HP{crit_str}{reaction_str}{effect_str}"
+            )
+        else:
+            manager.last_action_desc = (
+                f"{self.actor.name} 释放 {self.skill_name} → {self.target.name}{effect_str}"
+            )
         manager.last_damage_result = result
-        manager.last_damage_target = self.target
+        manager.last_damage_target = self.target if result is not None else None
 
 
 # ========== 道具行动（Day 7 接入） ==========

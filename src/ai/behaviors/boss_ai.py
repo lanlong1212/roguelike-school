@@ -38,7 +38,7 @@ def _boss_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     if actor.stats.ap < 2:
         return False
     action = AttackAction(
-        actor=actor, target=ctx.player, ap_cost=2,
+        actor=actor, target=ctx.attack_target(actor), ap_cost=2,
         multiplier=1.2, skill_name="重击",
     )
     return ctx.execute_enemy_action(actor, action)
@@ -51,9 +51,10 @@ def _boss_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     """
     if actor.stats.ap < 2:
         return False
+    target = ctx.attack_target(actor)
     # 第一次攻击
     action = AttackAction(
-        actor=actor, target=ctx.player, ap_cost=2,
+        actor=actor, target=target, ap_cost=2,
         multiplier=1.2, skill_name="连击一",
     )
     ok = ctx.execute_enemy_action(actor, action)
@@ -62,7 +63,7 @@ def _boss_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     # AP 还够就再打一次
     if actor.stats.ap >= 2:
         action2 = AttackAction(
-            actor=actor, target=ctx.player, ap_cost=2,
+            actor=actor, target=target, ap_cost=2,
             multiplier=1.0, skill_name="连击二",
         )
         ctx.execute_enemy_action(actor, action2)
@@ -77,19 +78,20 @@ def _boss_aoe_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     if actor.stats.ap < 3:
         return False
     action = AttackAction(
-        actor=actor, target=ctx.player, ap_cost=3,
+        actor=actor, target=ctx.attack_target(actor), ap_cost=3,
         multiplier=1.5, skill_name="全屏震击",
     )
     return ctx.execute_enemy_action(actor, action)
 
 
 def _boss_move_toward_player(actor: "Entity", ctx: "BattleManager") -> bool:
-    """Boss 朝玩家移动 1 格。本回合已攻击则不再走位。"""
+    """Boss 朝当前目标移动 1 格。本回合已攻击则不再走位。"""
     if actor.stats.ap < 1 or getattr(actor, "attacked_this_turn", False):
         return False
-    dx = _sign(ctx.player.grid_x - actor.grid_x)
-    dy = _sign(ctx.player.grid_y - actor.grid_y)
-    if abs(ctx.player.grid_x - actor.grid_x) >= abs(ctx.player.grid_y - actor.grid_y):
+    target = ctx.attack_target(actor)
+    dx = _sign(target.grid_x - actor.grid_x)
+    dy = _sign(target.grid_y - actor.grid_y)
+    if abs(target.grid_x - actor.grid_x) >= abs(target.grid_y - actor.grid_y):
         if dx != 0 and _try_boss_move(actor, ctx, dx, 0):
             return True
         if dy != 0 and _try_boss_move(actor, ctx, 0, dy):
@@ -108,7 +110,7 @@ def _try_boss_move(actor: "Entity", ctx: "BattleManager", dx: int, dy: int) -> b
     nx, ny = actor.grid_x + dx, actor.grid_y + dy
     if not ctx.tilemap.is_walkable(nx, ny):
         return False
-    if (nx, ny) == ctx.player.grid_pos:
+    if any(e.grid_pos == (nx, ny) for e in ctx.friendly_entities):
         return False
     for e in ctx.enemies:
         if e is not actor and not e.stats.is_dead() and e.grid_pos == (nx, ny):
@@ -118,11 +120,11 @@ def _try_boss_move(actor: "Entity", ctx: "BattleManager", dx: int, dy: int) -> b
 
 
 def _is_player_adjacent(actor: "Entity", ctx: "BattleManager") -> bool:
-    return _distance(actor, ctx.player) <= 1
+    return _distance(actor, ctx.attack_target(actor)) <= 1
 
 
 def _is_player_in_ranged_range(actor: "Entity", ctx: "BattleManager") -> bool:
-    return _distance(actor, ctx.player) <= 3
+    return _distance(actor, ctx.attack_target(actor)) <= 3
 
 
 # ========== 三阶段行为树工厂 ==========

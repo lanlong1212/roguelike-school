@@ -11,6 +11,7 @@
     - SLOW   减速：下回合 AP 上限 -1（寒冰箭附加）
     - MELT   融化：受击伤害 ×1.25（火+冰 反应）
     - OVERLOAD 超载：回合结束受到 magnitude 点雷伤（雷+火 反应）
+    - TAUNT   嘲讽：强制敌人 AI 以伙伴为目标（伙伴技能"嘲讽"附加）
 
     状态附加到实体上，由战斗管理器在回合开始/结束时统一处理。
     容器同时负责元素附着的存储（_aura），由 element 模块读写。
@@ -35,6 +36,7 @@ class EffectType(Enum):
     SLOW = auto()      # 减速（AP 上限 -1）
     MELT = auto()      # 融化：受击伤害 ×1.25
     OVERLOAD = auto()  # 超载：回合结束受到 magnitude 点雷伤
+    TAUNT = auto()     # 嘲讽：强制 AI 以伙伴为目标
 
 
 # 类型 → 显示名（用于 UI）
@@ -47,6 +49,7 @@ EFFECT_DISPLAY_NAME: dict[EffectType, str] = {
     EffectType.SLOW: "减速",
     EffectType.MELT: "融化",
     EffectType.OVERLOAD: "超载",
+    EffectType.TAUNT: "嘲讽",
 }
 
 

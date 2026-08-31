@@ -54,6 +54,8 @@ class Skill:
     element: Element = Element.NONE  # 技能元素（命中附着，触发反应）
     aoe: str = "none"  # 范围形态：none 单体 / splash 3×3 / line 直线穿透
     apply_effect: "EffectType | None" = None  # 命中附加状态（如减速）
+    effect_duration: int = 1    # 附加状态的持续回合数（默认 1）
+    effect_chance: float = 1.0  # 附加状态的触发概率 0~1（默认 100%）
 
 
 # ========== 可学习技能池 ==========
@@ -149,6 +151,11 @@ _TALENT_POOL: list[Talent] = [
         name="轻步疾行",
         desc="战斗移动范围 +1 格",
     ),
+    Talent(
+        id="summon_companion",
+        name="召唤伙伴",
+        desc="召唤伙伴加入战斗，AP 上限 +1（伙伴阵亡后加成消失）",
+    ),
 ]
 
 
@@ -160,7 +167,12 @@ def get_talent_pool() -> list[Talent]:
 
 
 def _apply_talent_effect(player: "Player", talent_id: str) -> None:
-    """天赋学习效果：永久修改玩家属性。新增天赋时在此分支。"""
+    """天赋学习效果：永久修改玩家属性。新增天赋时在此分支。
+
+    注意：summon_companion 故意不加分支——它的效果（创建伙伴实体、
+    AP 上限 +1）由 play_state 层处理。读档时天赋重放也会经过这里，
+    若在此加 AP 会导致与实体恢复叠加翻倍。
+    """
     if talent_id == "hp_up":
         increase = max(1, round(player.stats.max_hp * 0.10))
         player.stats.max_hp += increase
