@@ -61,6 +61,7 @@ COLOR_PLAYER = (80, 180, 255)   # 玩家
 COLOR_ENEMY = (220, 80, 80)     # 普通敌人
 COLOR_ELITE = (255, 140, 40)    # 精英敌人
 COLOR_BOSS = (180, 40, 220)     # Boss
+COLOR_COMPANION = (60,200,120)  #伙伴
 
 # ========== 战斗网格高亮颜色 (R, G, B, A) ==========
 COLOR_MOVE_RANGE = (80, 180, 255, 80)     # 可移动范围（蓝）

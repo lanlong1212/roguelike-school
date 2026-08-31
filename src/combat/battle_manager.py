@@ -21,6 +21,7 @@ from src.combat.status_effect import EffectType
 from src.entities.entity import Entity
 
 if TYPE_CHECKING:
+    from src.entities.companion import Companion
     from src.entities.player import Player
     from src.world.tilemap import TileMap
 
@@ -41,10 +42,14 @@ class BattleManager:
         player: "Player",
         enemies: list[Entity],
         tilemap: "TileMap",
+        companion: "Companion | None" = None,
     ):
         self.player = player
+        self.companion: "Companion | None" = companion
+        self.current_actor: Entity = player
         self.enemies: list[Entity] = enemies
         self.tilemap = tilemap
+        
 
         # 回合状态
         self.phase: TurnPhase = TurnPhase.PLAYER_TURN
@@ -59,21 +64,47 @@ class BattleManager:
         self.last_damage_result = None
         self.last_damage_target = None
 
-    # ========== 玩家行动接口 ==========
 
-    def can_execute(self, action: Action) -> bool:
-        """检查当前能否执行行动：玩家回合 + AP 足够 + 未被冻结/眩晕。"""
+        # ========== 受控实体与友方单位 ==========
+
+    @property
+    def friendly_entities(self) -> list[Entity]:
+        """友方单位列表（主角 + 存活的伙伴）。敌人 AI 目标选择用（阶段 4）。"""
+        if self.companion is not None and self.companion.alive:
+            return [self.player, self.companion]
+        return [self.player]
+
+    def switch_actor(self, actor: Entity) -> bool:
+        """
+        切换当前受控实体（主角 ↔ 伙伴）。
+        仅玩家回合、且目标为存活友方单位时成功，否则返回 False。
+        """
         if self.phase != TurnPhase.PLAYER_TURN:
             return False
-        # 冻结/眩晕：本回合不能行动（结束回合除外）
-        if self.player.status_effects.is_disabled() and not isinstance(action, EndTurnAction):
+        if actor is not self.player and actor is not self.companion:
             return False
+        if actor is self.companion and (self.companion is None or not self.companion.alive):
+            return False
+        self.current_actor = actor
+        return True
+
+
+    # ========== 玩家行动接口 ==========
+    def can_execute(self, action: Action) -> bool:
+        """检查当前能否执行行动：玩家回合 + AP 足够 + 受控实体未被冻结/眩晕。"""
+        if self.phase != TurnPhase.PLAYER_TURN:
+            return False
+        # 冻结/眩晕：本回合不能行动（结束回合除外）——判断当前受控实体
+        if self.current_actor.status_effects.is_disabled() and not isinstance(action, EndTurnAction):
+            return False
+        # 共享 AP 池：所有友方行动统一从主角 stats 扣除（伙伴不独立持池）
         return self.player.stats.ap >= action.ap_cost
 
     def execute_action(self, action: Action) -> bool:
         """
         执行一个玩家行动。AP 不足或非玩家回合返回 False。
         执行后检查胜负与回合结束条件。
+        伙伴与主角共享 AP 池：扣 AP 统一从 player.stats 扣除（召唤伙伴时 max_ap +1）。
         """
         if not self.can_execute(action):
             return False
@@ -99,7 +130,7 @@ class BattleManager:
 
         return True
 
-    # ========== 敌人行动接口（Day 6） ==========
+    # ========== 敌人行动接口 ==========
 
     def execute_enemy_action(self, actor: Entity, action: Action) -> bool:
         """
