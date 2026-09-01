@@ -8,8 +8,9 @@
 
 模拟规则：
     - 战场 = 真实 Floor 生成的对应类型房间（含随机障碍柱，含边界墙）
-    - 玩家策略（贪心 + 打带跑）：
+    - 玩家策略（贪心 + 打带跑，构筑含初始技能火苗术/护盾）：
         1. 血量≤50% 且有药水 → 喝药
+        1.5 血量≤50% 且无护盾 → 放护盾（1 AP，吸收 6 伤持续 2 回合）
         2. 攻击范围内有敌人 → 用可负担的最高倍率技能打最近敌人
            （若处于危险距离，保留 1 AP 用于撤退，或攻击可直接击杀的目标）
         3. 有敌人下回合能够到自己 → 撤退到"距离余量"最大的格子
@@ -34,7 +35,8 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import pygame  # noqa: E402
 pygame.init()  # noqa: E402
 
-from src.combat.action import AttackAction, MoveAction  # noqa: E402
+from src.combat.action import AttackAction, MoveAction, SkillAction  # noqa: E402
+from src.combat.status_effect import EffectType  # noqa: E402
 from src.combat.battle_manager import BattleManager  # noqa: E402
 from src.entities.player import Player, get_skill_pool  # noqa: E402
 from src.entities.enemies.slime import Slime  # noqa: E402
@@ -59,10 +61,12 @@ class Kit:
     potions: int
 
 
+# 真实构筑：L1 初始 = 基础攻击+火苗术+护盾，休息房学冲锋斩；
+# L2/L3 习得火球术后火苗术被替换（见 player.learn_skill 的 fireball 特判）。
 KITS: dict[int, Kit] = {
-    1: Kit("基础攻击+冲锋斩", ["basic_attack", "charge_slash"], 5, 1),
-    2: Kit("基础攻击+冲锋斩+火球", ["basic_attack", "charge_slash", "fireball"], 5, 2),
-    3: Kit("同 L2 + 精力充沛(AP+1)", ["basic_attack", "charge_slash", "fireball"], 6, 2),
+    1: Kit("初始3技能+冲锋斩", ["basic_attack", "ember", "shield", "charge_slash"], 5, 1),
+    2: Kit("L1+火球(替换火苗)", ["basic_attack", "shield", "charge_slash", "fireball"], 5, 2),
+    3: Kit("同 L2 + 精力充沛(AP+1)", ["basic_attack", "shield", "charge_slash", "fireball"], 6, 2),
 }
 
 _ROOM_OF = {"battle": RoomType.BATTLE, "elite": RoomType.ELITE, "boss": RoomType.BOSS}
@@ -226,11 +230,21 @@ def _run_battle(level: int, room_type: str, kit: Kit, seed: int, debug: bool = F
     while not battle.is_over and turns < 80:
         turns += 1
         # ---- 玩家回合（贪心 + hit&run：打完就撤，安全可连发） ----
+        guard = 0
         while not battle.is_over:
+            guard += 1
+            if guard > 50:  # 防御兜底：理论上每个分支都耗 AP 或 break，不该触发
+                print(f"\nWARN: 玩家回合循环 guard 触发 L{level} {room_type} seed={seed} "
+                      f"ap={player.stats.ap} hp={player.stats.hp} pos={player.grid_pos}")
+                break
             alive = [e for e in battle.enemies if not e.stats.is_dead()]
             if not alive:
                 break
             pos = player.grid_pos
+            # 0. 被冻结/眩晕 → 本回合无法行动，直接结束回合
+            #    （否则 execute_action 因 is_disabled 失败不扣 AP，各分支 continue 造成死循环）
+            if player.status_effects.is_disabled():
+                break
             # 1. 血量≤50% 且有药水 → 喝药（1 AP）
             if (
                 potions
@@ -242,6 +256,26 @@ def _run_battle(level: int, room_type: str, kit: Kit, seed: int, debug: bool = F
                 player.stats.spend_ap(1)
                 healed += player.stats.hp - hp_before
                 potions_used += 1
+                continue
+            # 1.5 放护盾（1 AP，自身增益）：仅当"放完仍留 1 AP"且
+            # （低血 或 当前安全无人能威胁到），避免抢占撤退/输出的关键 AP。
+            shield_sk = player.get_skill("shield")
+            safe_now = min(_threat(e, pos, tm) for e in alive) > 0
+            if (
+                shield_sk is not None
+                and player.stats.ap >= shield_sk.ap_cost + 1
+                and player.status_effects.get(EffectType.SHIELD) is None
+                and (player.stats.hp <= player.stats.max_hp // 2 or safe_now)
+            ):
+                battle.execute_action(
+                    SkillAction(
+                        player, player,
+                        skill_id="shield",
+                        multiplier=0.0,
+                        ap_cost=shield_sk.ap_cost,
+                        skill_name="护盾",
+                    )
+                )
                 continue
             # 2. 集火最近（同距离血少）的敌人
             focus = min(alive, key=lambda e: (_cheb(pos, e.grid_pos), e.stats.hp))
@@ -335,14 +369,18 @@ def best_range(player: Player) -> int:
 
 
 def run_scenario(level: int, room_type: str, kit: Kit, n: int) -> dict:
-    """跑 n 场同配置战斗，返回聚合统计。"""
+    """跑 n 场同配置战斗，返回聚合统计（每 10% 打印进度，避免无输出假死）。"""
     wins, dmg, turns, pots = 0, [], [], 0
+    step = max(1, n // 10)
     for i in range(n):
         r = _run_battle(level, room_type, kit, seed=1000 * level + i)
         wins += r["won"]
         dmg.append(r["damage"])
         turns.append(r["turns"])
         pots += r["potions"]
+        if (i + 1) % step == 0:
+            print(f"\r  {room_type}: {i+1}/{n}", end="", flush=True)
+    print()
     dmg_sorted = sorted(dmg)
     return {
         "win_rate": wins / n,
@@ -362,6 +400,7 @@ def run_report(n: int = 300, kits: dict | None = None) -> str:
         lines.append(f"— 第 {level} 层 [{kit.label}] AP={kit.max_ap} 药水×{kit.potions} —")
         floor_damage = 0.0
         for room, count in (("battle", 2), ("elite", 1), ("boss", 1)):
+            print(f"  跑 {room}×{count} ...", flush=True)
             r = run_scenario(level, room, kit, n)
             floor_damage += r["avg_damage"] * count
             win = f"{r['win_rate']*100:.0f}%"
@@ -382,4 +421,4 @@ def run_report(n: int = 300, kits: dict | None = None) -> str:
 
 if __name__ == "__main__":
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 300
-    print(run_report(n))
+    print(run_report(n), flush=True)
