@@ -17,7 +17,7 @@ from typing import Optional
 import pygame
 
 from src.combat.action import AttackAction, EndTurnAction, MoveAction, SkillAction
-from src.combat.battle_manager import BattleManager, TurnPhase
+from src.combat.battle_manager import BattleManager, TurnPhase, roll_relic_drop
 from src.combat.element import ELEMENT_COLOR, ELEMENT_NAME, REACTION_NAME, Element
 from src.combat.status_effect import EFFECT_DISPLAY_NAME, EffectType
 from src.core import config
@@ -25,7 +25,9 @@ from src.core import save_manager
 from src.core.asset_manager import resource_root
 from src.entities.enemy import Enemy
 from src.entities.player import Player, Skill, get_skill_pool
+from src.items.relics import RELICS
 from src.states.base_state import BaseState
+from src.ui.help_panel import HelpPanel
 from src.ui.hud import HUD
 from src.ui.icons import get_element_icon
 from src.ui.menu import InventoryMenu, PotionTargetMenu, RestMenu, ShopMenu
@@ -196,6 +198,8 @@ class PlayState(BaseState):
         # 友方单位列表（阶段 3：可控伙伴；未来可追加更多同类角色）。
         # 现有代码通过 _companion property 读取第一个伙伴，新增角色 append 即可。
         self._allies: list = []
+        # 图鉴帮助面板（覆盖层，不 push 状态栈）；None = 未打开
+        self.help_panel: HelpPanel | None = None
 
     # ========== 生命周期 ==========
 
@@ -282,6 +286,12 @@ class PlayState(BaseState):
     # ========== 输入 ==========
 
     def handle_event(self, event):
+        # 图鉴面板打开时：优先交给图鉴处理（键盘/鼠标全部消费）。
+        # handle_event 返回 False → 面板请求关闭，置空引用恢复游戏。
+        if self.help_panel is not None:
+            if not self.help_panel.handle_event(event):
+                self.help_panel = None
+            return
         # 方向键按下顺序记录（任何界面状态下都维护，保证长按方向状态一致）
         if event.type == pygame.KEYUP:
             if event.key in self._key_order:
@@ -298,6 +308,11 @@ class PlayState(BaseState):
             self._key_order.append(event.key)
 
         if event.type == pygame.KEYDOWN:
+            # F1 → 打开图鉴（任意界面下可用；打开时再按 F1 由上方 help_panel 分支关闭）
+            if event.key == pygame.K_F1:
+                # 传入玩家引用：遗物页按 owned_relics 显示已解锁/未获取
+                self.help_panel = HelpPanel(player=self.player)
+                return
             # ESC → 药水对象选择/商店/休息/背包界面开着则先关闭；否则 Day 8：暂停
             if event.key == pygame.K_ESCAPE:
                 if self._potion_target_menu is not None:
@@ -333,6 +348,7 @@ class PlayState(BaseState):
                 if self._inventory_menu is None:
                     self._inventory_menu = InventoryMenu(
                         self.player.inventory,
+                        player=self.player,
                         on_use_item=self._use_inventory_item,
                         on_close=self._close_inventory,
                     )
@@ -415,6 +431,10 @@ class PlayState(BaseState):
 
     def update(self, dt):
         """每帧推进敌人回合 + 飘字动画 + 实体动画。"""
+        # 图鉴打开时暂停全部游戏逻辑（类似暂停，底层画面保留供遮罩下显示）
+        if self.help_panel is not None:
+            self.help_panel.update(dt)
+            return
         # 飘字更新（无论何种模式）
         if self._floating_texts:
             self._floating_texts = [t for t in self._floating_texts if t.update(dt)]
@@ -585,6 +605,8 @@ class PlayState(BaseState):
             instant=True,
         )
         self.player.stats.reset_ap()
+        # 遗物：守护符 —— 每层首次受伤免疫，进入新楼层重置
+        self.player.layer_guard_used = False
         self.mode = PlayMode.EXPLORE
         self.battle = None
         self._move_range.clear()
@@ -653,18 +675,43 @@ class PlayState(BaseState):
         self._shop_menu = None
 
     def _create_shop_stock(self) -> list:
-        """商店库存（固定全库存 + 价格）。"""
+        """商店库存（固定全库存 + 价格 + 30% 概率遗物位）。"""
+        import random
+
+        from src.items.item import Item, ItemType, Rarity
         from src.items.potion import HealthPotion, StrengthPotion
+        from src.items.relics import RELICS
         from src.items.weapon import create_iron_sword, create_long_bow
-        return [
+        stock = [
             (create_iron_sword(), config.SHOP_PRICE_IRON_SWORD),
             (create_long_bow(), config.SHOP_PRICE_LONG_BOW),
             (HealthPotion(), config.SHOP_PRICE_HEALTH_POTION),
             (StrengthPotion(), config.SHOP_PRICE_STRENGTH_POTION),
         ]
+        # 30% 概率出现遗物商品：随机选一个尚未拥有的遗物，价格 40 金。
+        # 全部遗物已拥有则不再生成（重复保护）。
+        if random.random() < 0.3:
+            pool = [rid for rid in RELICS if rid not in self.player.owned_relics]
+            if pool:
+                rid = random.choice(pool)
+                relic = RELICS[rid]
+                stock.append((
+                    Item(
+                        id=rid,
+                        name=relic["name"],
+                        item_type=ItemType.RELIC,
+                        rarity=Rarity.EPIC,
+                        description=relic["description"],
+                    ),
+                    config.SHOP_PRICE_RELIC,
+                ))
+        return stock
 
     def _buy_shop_item(self, index: int) -> None:
-        """购买商品：扣金币、入背包、标记售罄。"""
+        """购买商品：扣金币、入背包/遗物列表、标记售罄。"""
+        from src.items.item import ItemType
+        from src.items.relics import grant_relic
+
         shop = self._shop_menu
         if shop is None:
             return
@@ -673,6 +720,16 @@ class PlayState(BaseState):
             return
         if self.player.gold < price:
             self._last_loot_desc = "金币不足！"
+            return
+        # 遗物商品：不占背包，直接加入遗物列表并应用立即生效属性
+        if item.item_type == ItemType.RELIC:
+            self.player.gold -= price
+            if grant_relic(self.player, item.id):
+                shop.mark_sold(index)
+                self._last_loot_desc = f"购买了遗物：{item.name}"
+            else:
+                # 理论上已售罄才会到这里（重复保护兜底）
+                self._last_loot_desc = "已拥有该遗物"
             return
         if self.player.inventory.is_full:
             self._last_loot_desc = "背包已满！"
@@ -1176,8 +1233,16 @@ class PlayState(BaseState):
             if enemy.stats.is_dead() and id(enemy) not in self._counted_kills:
                 self._kills += 1
                 self._counted_kills.add(id(enemy))
-                # 商店经济：击杀掉落金币
-                self.player.gold += enemy.gold_reward
+                # 商店经济：击杀掉落金币（遗物：贪婪之眼翻倍）
+                reward = enemy.gold_reward * (
+                    2 if "greedy_eye" in self.player.relics else 1
+                )
+                self.player.gold += reward
+                # 遗物：击战鼓 —— 击杀回复 1 AP（不超过上限）
+                if "war_drum" in self.player.relics:
+                    self.player.stats.ap = min(
+                        self.player.stats.max_ap, self.player.stats.ap + 1
+                    )
                 # 死亡动画演出：加入尸体列表，播完后消失。
                 # 防御：素材缺 death 帧表时不进演出列表（直接消失），避免卡尸
                 enemy.play_anim("death", restart=True)
@@ -1272,13 +1337,16 @@ class PlayState(BaseState):
             self.game.change_state(MenuState(self.game))
 
     def _drop_boss_loot(self) -> str:
-        """Boss 掉落：长弓 + 治疗药水 ×2。返回掉落描述。"""
+        """Boss 掉落：长弓 + 治疗药水 ×2 + 必掉遗物。返回掉落描述。"""
         from src.items.weapon import create_long_bow
         from src.items.potion import HealthPotion
         loot = [create_long_bow(), HealthPotion(), HealthPotion()]
         for item in loot:
             self.player.inventory.add(item)
-        return f"获得战利品：{', '.join(i.name for i in loot)}"
+        base = f"获得战利品：{', '.join(i.name for i in loot)}"
+        # Boss 击杀必掉遗物（docs/遗物系统 3.1）
+        relic_desc = roll_relic_drop("boss", self.player)
+        return f"{base} | {relic_desc}" if relic_desc else base
 
     def _drop_battle_loot(self) -> str:
         """普通战斗掉落：50% 药水，30% 铁剑。返回掉落描述。"""
@@ -1296,20 +1364,23 @@ class PlayState(BaseState):
             return "战斗胜利！"
 
     def _drop_elite_loot(self) -> str:
-        """精英掉落：30% 长弓，40% 铁剑，30% 力量药水。返回掉落描述。"""
+        """精英掉落：30% 长弓，40% 铁剑，30% 力量药水 + 40% 遗物。返回掉落描述。"""
         import random
         from src.items.potion import StrengthPotion
         from src.items.weapon import create_iron_sword, create_long_bow
         roll = random.random()
         if roll < 0.3:
             self.player.inventory.add(create_long_bow())
-            return "获得：长弓"
+            base = "获得：长弓"
         elif roll < 0.7:
             self.player.inventory.add(create_iron_sword())
-            return "获得：铁剑"
+            base = "获得：铁剑"
         else:
             self.player.inventory.add(StrengthPotion())
-            return "获得：力量药水"
+            base = "获得：力量药水"
+        # 精英击杀 40% 概率掉落遗物（docs/遗物系统 3.1）
+        relic_desc = roll_relic_drop("elite", self.player)
+        return f"{base} | {relic_desc}" if relic_desc else base
 
     # ========== 相机 ==========
 
@@ -1438,9 +1509,10 @@ class PlayState(BaseState):
 
         # ---------- 第八层：HUD ----------
         self.hud.draw(screen, self.game.font)
-        # 战斗模式：技能栏 + 受控实体头像栏
+        # 战斗模式：技能栏 + 遗物栏 + 受控实体头像栏
         if self.mode == PlayMode.BATTLE:
             self._draw_skill_bar(screen)
+            self._draw_relic_bar(screen)
             self._draw_actor_bar(screen)
         # 背包界面
         if self._inventory_menu is not None:
@@ -1458,6 +1530,10 @@ class PlayState(BaseState):
         if self._rest_menu is not None:
             self._rest_menu.update(0)
             self._rest_menu.draw(screen, self.game.font, self.game.font_small)
+        # 图鉴帮助面板：覆盖在所有游戏元素之上
+        if self.help_panel is not None:
+            self.help_panel.update(0)
+            self.help_panel.draw(screen, self.game.font, self.game.font_small)
 
     def _draw_battle_highlights(self, screen, cam_x, cam_y, ts) -> None:
         """绘制可移动（蓝）/可攻击（红）半透明高亮。"""
@@ -1747,6 +1823,74 @@ class PlayState(BaseState):
         # 悬停说明面板
         if hovered_skill is not None and hovered_rect is not None:
             self._draw_skill_tooltip(screen, hovered_skill, hovered_rect)
+
+    # ========== 遗物栏（战斗 HUD） ==========
+
+    def _draw_relic_bar(self, screen) -> None:
+        """绘制战斗 HUD 遗物栏：技能栏下方一行小图标（色块 + 单字占位）。
+        最多显示 5 个；超过 5 个自动缩小图标并追加 "+N" 标记。
+        悬停图标显示名称与效果说明（tooltip 与技能说明同风格）。
+        未拥有任何遗物时不绘制。"""
+        assert self.player
+        relics = self.player.relics
+        if not relics:
+            return
+        icon_size = 24
+        gap = 4
+        # 超过 5 个：缩小图标尺寸腾出空间
+        if len(relics) > 5:
+            icon_size = 20
+        max_show = 5
+        x, y = 10, 150  # 技能栏（y≈88~137）下方
+        mouse_pos = pygame.mouse.get_pos()
+        hovered_relic: dict | None = None
+        hovered_rect: pygame.Rect | None = None
+        for rid in relics[:max_show]:
+            data = RELICS.get(rid)
+            if data is None:
+                continue
+            rect = pygame.Rect(x, y, icon_size, icon_size)
+            pygame.draw.rect(screen, data["color"], rect, border_radius=4)
+            pygame.draw.rect(screen, (20, 20, 30), rect, 1, border_radius=4)
+            ch = data.get("short") or data["name"][:1]
+            t = self.game.font_small.render(ch, True, (20, 20, 30))
+            screen.blit(t, t.get_rect(center=rect.center))
+            if rect.collidepoint(mouse_pos):
+                hovered_relic = data
+                hovered_rect = rect
+            x += icon_size + gap
+        # 超出 5 个的遗物数量标记
+        extra = len(relics) - max_show
+        if extra > 0:
+            more = self.game.font_small.render(f"+{extra}", True, (210, 210, 220))
+            screen.blit(more, (x + 2, y + (icon_size - more.get_height()) // 2))
+        # 悬停说明面板
+        if hovered_relic is not None and hovered_rect is not None:
+            self._draw_relic_tooltip(screen, hovered_relic, hovered_rect)
+
+    def _draw_relic_tooltip(self, screen, relic: dict, anchor: pygame.Rect) -> None:
+        """悬停遗物图标时绘制说明面板（名称金色 + 效果描述，与技能说明同风格）。"""
+        lines: list[tuple[str, tuple, object]] = [
+            (relic["name"], config.COLOR_TEXT_HIGHLIGHT, self.game.font),
+            (relic["description"], (200, 200, 200), self.game.font_small),
+        ]
+        pad = 8
+        line_h = 18
+        panel_w = max(font.size(t)[0] for t, _, font in lines) + pad * 2
+        panel_h = pad * 2 + line_h * len(lines)
+        x, y = anchor.x, anchor.bottom + 6
+        # 面板越界时翻到图标上方 / 收进屏幕
+        if y + panel_h > config.SCREEN_HEIGHT - 10:
+            y = anchor.top - panel_h - 6
+        if x + panel_w > config.SCREEN_WIDTH - 10:
+            x = config.SCREEN_WIDTH - panel_w - 10
+        bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        bg.fill((20, 20, 30, 235))
+        screen.blit(bg, (x, y))
+        pygame.draw.rect(screen, (110, 110, 130), (x, y, panel_w, panel_h), 1, border_radius=4)
+        for idx, (text, color, font) in enumerate(lines):
+            surf = font.render(text, True, color)
+            screen.blit(surf, (x + pad, y + pad + idx * line_h))
 
     # ========== 技能图标绘制 ==========
 

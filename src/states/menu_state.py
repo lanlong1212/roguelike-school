@@ -14,10 +14,11 @@ from src.core import config
 from src.core import save_manager
 from src.states.base_state import BaseState
 from src.states.play_state import PlayState
+from src.ui.help_panel import HelpPanel
 
 
 class MenuState(BaseState):
-    """主菜单状态：标题展示 + 开始/继续游戏按钮。"""
+    """主菜单状态：标题展示 + 开始/继续/图鉴按钮。"""
 
     def __init__(self, game):
         super().__init__(game)
@@ -28,7 +29,12 @@ class MenuState(BaseState):
         # "继续游戏"按钮（有存档时显示），位于开始按钮下方
         self.continue_rect = pygame.Rect(0, 0, 240, 60)
         self.continue_rect.center = (cx, config.SCREEN_HEIGHT // 2 + 120)
+        # "图鉴"按钮，位于继续按钮下方（无存档时与开始按钮间距略大，可接受）
+        self.help_rect = pygame.Rect(0, 0, 240, 60)
+        self.help_rect.center = (cx, config.SCREEN_HEIGHT // 2 + 200)
         self.has_save = save_manager.has_save()
+        # 图鉴面板（覆盖层，不压状态栈）；None = 未打开
+        self.help_panel: HelpPanel | None = None
 
     # ========== 生命周期 ==========
 
@@ -40,8 +46,13 @@ class MenuState(BaseState):
         pass
 
     def handle_event(self, event):
-        """处理输入：点击按钮/回车开始游戏，Esc 退出。"""
-        # 鼠标左键点击按钮区域 → 进入游戏
+        """处理输入：点击按钮/回车开始游戏，F1 打开图鉴，Esc 退出。"""
+        # 图鉴打开时优先处理（F1/Esc/点X/点面板外关闭；左右键切标签）
+        if self.help_panel is not None:
+            if not self.help_panel.handle_event(event):
+                self.help_panel = None
+            return
+        # 鼠标左键点击按钮区域 → 进入游戏 / 打开图鉴
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.button_rect.collidepoint(event.pos):
                 self.game.change_state(PlayState(self.game))
@@ -49,15 +60,22 @@ class MenuState(BaseState):
             if self.has_save and self.continue_rect.collidepoint(event.pos):
                 self.game.change_state(PlayState(self.game, load_data=save_manager.load_game()))
                 return
+            if self.help_rect.collidepoint(event.pos):
+                self.help_panel = HelpPanel()
+                return
         # 键盘操作
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+            if event.key == pygame.K_F1:
+                self.help_panel = HelpPanel()
+            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
                 self.game.change_state(PlayState(self.game))
-            if event.key == pygame.K_ESCAPE:
+            elif event.key == pygame.K_ESCAPE:
                 self.game.quit()
 
     def update(self, dt):
-        pass
+        # 图鉴打开时暂停菜单动画（保持静止，绘制由 draw 叠加）
+        if self.help_panel is not None:
+            self.help_panel.update(dt)
 
     # ========== 绘制 ==========
 
@@ -96,7 +114,21 @@ class MenuState(BaseState):
             text_rect2 = text2.get_rect(center=self.continue_rect.center)
             screen.blit(text2, text_rect2)
 
+        # ---------- 图鉴按钮（带 hover 高亮） ----------
+        hover3 = self.help_rect.collidepoint(mouse_pos)
+        color3 = (60, 80, 130) if hover3 else (45, 55, 90)
+        pygame.draw.rect(screen, color3, self.help_rect, border_radius=8)
+        pygame.draw.rect(screen, config.WHITE, self.help_rect, 2, border_radius=8)
+        text3 = self.game.font.render("图鉴 (F1)", True, config.COLOR_TEXT)
+        text_rect3 = text3.get_rect(center=self.help_rect.center)
+        screen.blit(text3, text_rect3)
+
         # ---------- 底部操作提示 ----------
-        hint = self.game.font.render("回车/点击开始 · Esc 退出", True, config.LIGHT_GRAY)
+        hint = self.game.font.render("回车/点击开始 · F1 图鉴 · Esc 退出", True, config.LIGHT_GRAY)
         hint_rect = hint.get_rect(center=(config.SCREEN_WIDTH // 2, config.SCREEN_HEIGHT - 40))
         screen.blit(hint, hint_rect)
+
+        # ---------- 图鉴面板（覆盖在所有菜单元素之上） ----------
+        if self.help_panel is not None:
+            self.help_panel.update(0)
+            self.help_panel.draw(screen, self.game.font, self.game.font_small)
