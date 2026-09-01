@@ -51,6 +51,9 @@ class Boss(Enemy):
             Element.FIRE: 0.75,
             Element.ICE: 0.75,
         }
+        # 攻击元素：普攻/连击附着雷元素；阶段 3 全屏震击附着火元素
+        self.attack_element: Element = Element.LIGHTNING
+        self.attack_aoe_element: Element = Element.FIRE
         # 动画注册（横向帧表位于 assets/images/entities/boss/，文件名首字母大写）：
         # idle 8fps / walk 10fps 循环；attack(普攻/双连击) 12fps / hurt 12fps
         # 播完回 idle；attack_rage(阶段3 AOE 震击) 12fps 播完回 idle；death 10fps

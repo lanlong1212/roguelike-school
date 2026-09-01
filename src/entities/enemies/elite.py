@@ -90,6 +90,12 @@ class Elite(Enemy):
         """当前阶段（1/2/3）。"""
         return self._phase
 
+    @property
+    def attack_element(self):
+        """攻击元素：仅阶段 3 狂暴（血量 <40%）附着冰元素，其余阶段物理。"""
+        from src.combat.element import Element
+        return Element.ICE if self._phase == 3 else Element.NONE
+
     def _update_phase(self) -> None:
         """根据 HP 百分比更新阶段，切换行为树。"""
         hp_pct = self.stats.hp / self.stats.max_hp

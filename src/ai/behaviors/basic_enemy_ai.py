@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from src.ai.behavior_tree import BehaviorTree
 from src.ai.nodes import Action, BTNode, Condition, NodeStatus, Selector, Sequence
 from src.combat.action import AttackAction, MoveAction
+from src.combat.element import Element
 from src.utils.vector import Vector2
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ def _attack_player(actor: "Entity", ctx: "BattleManager") -> bool:
         ap_cost=2,
         multiplier=1.0,
         skill_name="撕咬",
+        element=getattr(actor, "attack_element", Element.NONE),
     )
     return ctx.execute_enemy_action(actor, action)
 
@@ -140,6 +142,7 @@ def _ranged_attack(actor: "Entity", ctx: "BattleManager") -> bool:
         ap_cost=2,
         multiplier=1.0,
         skill_name="射箭",
+        element=getattr(actor, "attack_element", Element.NONE),
     )
     return ctx.execute_enemy_action(actor, action)
 

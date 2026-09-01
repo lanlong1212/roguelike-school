@@ -17,6 +17,7 @@ from src.ai.behavior_tree import BehaviorTree
 from src.ai.nodes import Action, BTNode, Condition, NodeStatus, Selector, Sequence
 from src.combat.action import AttackAction
 from src.combat.battle_manager import BattleManager
+from src.combat.element import Element
 from src.entities.entity import Entity
 
 if TYPE_CHECKING:
@@ -34,12 +35,13 @@ def _sign(v: int) -> int:
 
 
 def _boss_attack(actor: "Entity", ctx: "BattleManager") -> bool:
-    """Boss 普通攻击（2 AP）。"""
+    """Boss 普通攻击（2 AP），附着雷元素。"""
     if actor.stats.ap < 2:
         return False
     action = AttackAction(
         actor=actor, target=ctx.attack_target(actor), ap_cost=2,
         multiplier=1.2, skill_name="重击",
+        element=getattr(actor, "attack_element", Element.NONE),
     )
     return ctx.execute_enemy_action(actor, action)
 
@@ -52,10 +54,12 @@ def _boss_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     if actor.stats.ap < 2:
         return False
     target = ctx.attack_target(actor)
+    # 阶段 2 连击：附着雷元素
+    element = getattr(actor, "attack_element", Element.NONE)
     # 第一次攻击
     action = AttackAction(
         actor=actor, target=target, ap_cost=2,
-        multiplier=1.2, skill_name="连击一",
+        multiplier=1.2, skill_name="连击一", element=element,
     )
     ok = ctx.execute_enemy_action(actor, action)
     if not ok:
@@ -64,7 +68,7 @@ def _boss_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     if actor.stats.ap >= 2:
         action2 = AttackAction(
             actor=actor, target=target, ap_cost=2,
-            multiplier=1.0, skill_name="连击二",
+            multiplier=1.0, skill_name="连击二", element=element,
         )
         ctx.execute_enemy_action(actor, action2)
     return True
@@ -80,6 +84,7 @@ def _boss_aoe_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     action = AttackAction(
         actor=actor, target=ctx.attack_target(actor), ap_cost=3,
         multiplier=1.5, skill_name="全屏震击",
+        element=getattr(actor, "attack_aoe_element", Element.NONE),
     )
     return ctx.execute_enemy_action(actor, action)
 

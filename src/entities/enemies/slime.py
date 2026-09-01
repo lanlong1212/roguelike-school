@@ -42,6 +42,8 @@ class Slime(Enemy):
             Element.LIGHTNING: 1.25,
             Element.ICE: 0.75,
         }
+        # 攻击元素：近战撕咬附着水元素（自动走附着/反应链）
+        self.attack_element: Element = Element.WATER
         # 动画（横向帧表）：idle 6 帧 / walk 5 帧 / attack 11 帧 / death 18 帧
         from src.core.asset_manager import assets
         from src.entities.animation import Animator

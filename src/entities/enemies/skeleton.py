@@ -42,6 +42,8 @@ class Skeleton(Enemy):
             Element.ICE: 1.25,
             Element.FIRE: 0.75,
         }
+        # 攻击元素：远程箭矢附着火元素（自动走附着/反应链）
+        self.attack_element: Element = Element.FIRE
         # 动画（横向帧表）：idle 4 / walk 8 / attack 9 / hurt 4 / death 6 帧
         from src.core.asset_manager import assets
         from src.entities.animation import Animator

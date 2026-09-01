@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from src.ai.behavior_tree import BehaviorTree
 from src.ai.nodes import Action, BTNode, Condition, NodeStatus, Selector, Sequence
 from src.combat.action import AttackAction, MoveAction
+from src.combat.element import Element
 from src.utils.vector import Vector2
 
 if TYPE_CHECKING:
@@ -84,12 +85,13 @@ def _elite_move_away(actor: "Entity", ctx: "BattleManager") -> bool:
 
 
 def _elite_ranged_attack(actor: "Entity", ctx: "BattleManager", multiplier: float, name: str) -> bool:
-    """远程攻击当前目标（2 AP）。"""
+    """远程攻击当前目标（2 AP）。元素按实体 attack_element（阶段 1/2 为物理）。"""
     if actor.stats.ap < 2:
         return False
     action = AttackAction(
         actor=actor, target=ctx.attack_target(actor), ap_cost=2,
         multiplier=multiplier, skill_name=name,
+        element=getattr(actor, "attack_element", Element.NONE),
     )
     return ctx.execute_enemy_action(actor, action)
 
@@ -221,9 +223,11 @@ def _berserk_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     if actor.stats.ap < 2:
         return False
     target = ctx.attack_target(actor)
+    # 阶段 3 狂暴：攻击附着冰元素（attack_element property 按阶段返回）
+    element = getattr(actor, "attack_element", Element.NONE)
     action = AttackAction(
         actor=actor, target=target, ap_cost=2,
-        multiplier=1.6, skill_name="狂暴连击一",
+        multiplier=1.6, skill_name="狂暴连击一", element=element,
     )
     ok = ctx.execute_enemy_action(actor, action)
     if not ok:
@@ -231,7 +235,7 @@ def _berserk_double_attack(actor: "Entity", ctx: "BattleManager") -> bool:
     if actor.stats.ap >= 2:
         action2 = AttackAction(
             actor=actor, target=target, ap_cost=2,
-            multiplier=1.3, skill_name="狂暴连击二",
+            multiplier=1.3, skill_name="狂暴连击二", element=element,
         )
         ctx.execute_enemy_action(actor, action2)
     return True
