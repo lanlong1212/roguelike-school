@@ -112,6 +112,14 @@ def apply_damage(
     result.damage = int(result.damage * impact.damage_multiplier) + impact.bonus_damage
     result.reaction = impact.reaction
 
+    # ===== 遗物加成（docs/遗物系统；仅玩家拥有 relics，其余实体 getattr 兜底为空） =====
+    # 元素共鸣：元素反应伤害 ×1.2（叠加顺序：反应倍率 → 遗物加成）
+    if impact.reaction is not None and "element_echo" in getattr(attacker, "relics", []):
+        result.damage = int(result.damage * 1.2)
+    # 火种：火元素技能伤害 ×1.25（紧跟反应加成之后、其他状态倍率之前）
+    if element == Element.FIRE and "fire_seed" in getattr(attacker, "relics", []):
+        result.damage = int(result.damage * 1.25)
+
     # 感电：受击伤害 ×1.5
     if target.status_effects.has(EffectType.SHOCK):
         result.damage = int(result.damage * 1.5)
@@ -127,6 +135,13 @@ def apply_damage(
     ):
         result.damage = max(1, result.damage - config.GUARDIAN_HALO_REDUCTION)
         setattr(target, "guardian_halo_used", True)
+
+    # 遗物：守护符 —— 每层首次受伤完全免疫（整层只挡一次，下楼由 play_state 重置）
+    if "guardian_charm" in getattr(target, "relics", []) and not getattr(
+        target, "layer_guard_used", True
+    ):
+        result.damage = 0
+        setattr(target, "layer_guard_used", True)
 
     # 护盾吸收
     remaining = target.status_effects.absorb_damage(result.damage)

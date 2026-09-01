@@ -46,6 +46,7 @@ SHOP_PRICE_IRON_SWORD = 20
 SHOP_PRICE_LONG_BOW = 35
 SHOP_PRICE_HEALTH_POTION = 10
 SHOP_PRICE_STRENGTH_POTION = 25
+SHOP_PRICE_RELIC = 40            # 商店遗物商品价格
 
 # ========== 基础颜色 (R, G, B) ==========
 BLACK = (0, 0, 0)
