@@ -115,6 +115,11 @@ class StatusEffectContainer:
         """当前附着元素（None=无附着）。"""
         return self._aura
 
+    @property
+    def aura_remaining(self) -> int:
+        """附着剩余回合数（UI 显示用）。"""
+        return self._aura_remaining
+
     def set_aura(self, element: "Element", duration: int) -> None:
         """设置/刷新附着元素。"""
         self._aura = element
