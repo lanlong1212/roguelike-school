@@ -326,6 +326,10 @@ class PlayState(BaseState):
                 if self._potion_target_menu is not None:
                     self._close_potion_target()
                     return
+                # 商店/休息界面打开时按 B 不响应（同 ESC 拦截逻辑，
+                # 避免背包与商店层叠：商店画在背包上层但点击先给背包，导致关不掉商店）
+                if self._shop_menu is not None or self._rest_menu is not None:
+                    return
                 if self._inventory_menu is None:
                     self._inventory_menu = InventoryMenu(
                         self.player.inventory,
