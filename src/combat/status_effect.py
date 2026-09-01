@@ -167,7 +167,8 @@ class StatusEffectContainer:
         return logs
 
     def on_turn_end(self, entity: "Entity") -> list[str]:
-        """回合结束时调用：超载结算雷伤，随后非护盾效果时长 -1，归零移除。"""
+        """回合结束时调用：超载结算雷伤，随后所有效果时长 -1，归零移除。
+        护盾同样倒计时（护盾技能持续 2 回合），与"吸收完消失"双重约束。"""
         logs: list[str] = []
         # 超载：回合结束受到 magnitude 点雷伤（先结算再倒计时）
         overload = self.get(EffectType.OVERLOAD)
@@ -177,8 +178,7 @@ class StatusEffectContainer:
             logs.append(f"超载雷爆对 {entity.name} 造成 {dmg} 点伤害")
         remaining: list[StatusEffect] = []
         for e in self._effects:
-            if e.effect_type != EffectType.SHIELD:
-                e.duration -= 1
+            e.duration -= 1
             if e.duration > 0:
                 remaining.append(e)
         self._effects = remaining

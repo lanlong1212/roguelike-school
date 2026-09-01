@@ -70,6 +70,16 @@ _SKILL_POOL: list[Skill] = [
         desc="对相邻敌人造成 ATK×1.0 物理伤害",
     ),
     Skill(
+        id="shield",
+        name="护盾",
+        ap_cost=1,
+        range_cells=0,
+        multiplier=0.0,
+        desc="给自身附加护盾，吸收 5 点伤害，持续 2 回合",
+        apply_effect=EffectType.SHIELD,
+        effect_duration=2,
+    ),
+    Skill(
         id="charge_slash",
         name="冲锋斩",
         ap_cost=3,
@@ -195,8 +205,8 @@ class Player(Entity):
             color=config.COLOR_PLAYER,
             name="Player",
         )
-        # 技能列表（深拷贝避免共享）：初始仅基础攻击
-        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _SKILL_POOL[:1]]
+        # 技能列表（深拷贝避免共享）：初始为基础攻击 + 护盾
+        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _SKILL_POOL[:2]]
         # 当前选中的技能（None=未选中，使用基础攻击）
         self.selected_skill: Skill | None = None
         # Day 7：背包系统

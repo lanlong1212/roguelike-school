@@ -179,6 +179,22 @@ class SkillAction(Action):
             manager.last_damage_result = None
             manager.last_damage_target = None
             return
+        # 护盾：自身增益技能（无伤害），附加吸收 SHIELD_ABSORB 点伤害的护盾，持续 2 回合
+        if self.skill_id == "shield":
+            self.actor.status_effects.add(
+                StatusEffect(
+                    EffectType.SHIELD,
+                    duration=2,
+                    magnitude=config.SHIELD_ABSORB,
+                    source_name="护盾",
+                )
+            )
+            manager.last_action_desc = (
+                f"{self.actor.name} 释放 护盾（吸收 {config.SHIELD_ABSORB} 点伤害，持续 2 回合）"
+            )
+            manager.last_damage_result = None
+            manager.last_damage_target = None
+            return
         # 嘲讽每回合限 1 次：施放即标记（0 AP 免费技能）
         if self.skill_id == "taunt":
             setattr(self.actor, "taunt_used_this_turn", True)

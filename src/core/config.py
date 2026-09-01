@@ -28,6 +28,7 @@ COMPANION_AP_MAX = 2         # 伙伴独立 AP 池：每回合固定行动点（
 MOVE_RANGE = 3               # 每回合移动格数上限
 GUARDIAN_HALO_REDUCTION = 2  # 守护光环：伙伴存活时主角每回合首次受伤的减伤值
 COUNTER_STANCE_RATIO = 0.5   # 反击姿态：反击伤害比例（所受最终伤害的 50%）
+SHIELD_ABSORB = 5            # 护盾技能：吸收伤害量（持续 2 回合）
 
 # ========== 战棋化：战场障碍与 AoE ==========
 OBSTACLE_MIN = 6             # 战斗/精英/Boss 房障碍柱数量下限
