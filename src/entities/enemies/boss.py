@@ -32,8 +32,8 @@ class Boss(Enemy):
         super().__init__(
             position=position,
             stats=Stats(
-                max_hp=80,  # Day 9: 60→80，延长 Boss 战让阶段切换更有节奏
-                atk=8,
+                max_hp=70,  # Day 9: 60→80；Day 10: 80→70，配合超载数值下调降低 L3 Boss 难度
+                atk=6,      # Day 10: 8→6，降低全楼层 Boss 攻击压力（L1 8→6 / L2 9.6→7.2 / L3 11.2→8.4）
                 def_=3,
                 max_ap=4,
                 move_range=2,

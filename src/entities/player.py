@@ -22,6 +22,7 @@ Day 5 扩展：
 
 技能配置：
     basic_attack  基础攻击  2 AP  相邻 1 格  1.0×  物理   （初始自带）
+    ember         火苗术    2 AP  2 格      1.0×  火          （初始自带，习得火球术后移除）
     charge_slash  冲锋斩    3 AP  相邻 1 格  1.8×  物理
     fireball      火球术    3 AP  5 格      1.8×  火  3×3 溅射
     ice_arrow     寒冰箭    3 AP  4 格      1.6×  冰  附加减速
@@ -70,12 +71,21 @@ _SKILL_POOL: list[Skill] = [
         desc="对相邻敌人造成 ATK×1.0 物理伤害",
     ),
     Skill(
+        id="ember",
+        name="火苗术",
+        ap_cost=2,
+        range_cells=2,
+        multiplier=1.0,
+        desc="对 2 格内单体造成 ATK×1.0 火伤，附着火元素",
+        element=Element.FIRE,
+    ),
+    Skill(
         id="shield",
         name="护盾",
         ap_cost=1,
         range_cells=0,
         multiplier=0.0,
-        desc="给自身附加护盾，吸收 5 点伤害，持续 2 回合",
+        desc="给自身附加护盾，吸收 6 点伤害，持续 2 回合",
         apply_effect=EffectType.SHIELD,
         effect_duration=2,
     ),
@@ -132,6 +142,15 @@ _SKILL_POOL: list[Skill] = [
 def get_skill_pool() -> list[Skill]:
     """返回技能池副本（供休息房间"强化"选择）。"""
     return [Skill(**s.__dict__) for s in _SKILL_POOL]
+
+
+def learn_fireball_replacing_ember(player: "Player") -> bool:
+    """学习火球术并移除初始火苗术（供天赋/遗物等未来授予点统一调用）。
+
+    内部复用 learn_skill 的 fireball 特判（先移除 ember 再添加）；
+    已拥有火球术时返回 False，避免重复移除或添加。
+    """
+    return player.learn_skill("fireball")
 
 
 # ========== 被动天赋（PRD 技能子系统：升级三选一节点） ==========
@@ -205,8 +224,9 @@ class Player(Entity):
             color=config.COLOR_PLAYER,
             name="Player",
         )
-        # 技能列表（深拷贝避免共享）：初始为基础攻击 + 护盾
-        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _SKILL_POOL[:2]]
+        # 技能列表（深拷贝避免共享）：初始为基础攻击 + 火苗术 + 护盾。
+        # 火苗术是 L1 初始元素手段，习得火球术后自动移除（见 learn_skill）。
+        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _SKILL_POOL[:3]]
         # 当前选中的技能（None=未选中，使用基础攻击）
         self.selected_skill: Skill | None = None
         # Day 7：背包系统
@@ -248,6 +268,9 @@ class Player(Entity):
         """从技能池学习一个技能（已学会返回 False）。"""
         if self.get_skill(skill_id) is not None:
             return False
+        # 火球术取代初始火苗术：先移除 ember 再添加，保持技能栏顺序合理
+        if skill_id == "fireball":
+            self.skills = [s for s in self.skills if s.id != "ember"]
         for s in _SKILL_POOL:
             if s.id == skill_id:
                 self.skills.append(Skill(**s.__dict__))

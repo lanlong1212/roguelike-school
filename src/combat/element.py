@@ -135,7 +135,9 @@ def _apply_reaction_status(
             StatusEffect(EffectType.MELT, duration=1, source_name="融化")
         )
     elif reaction is Reaction.OVERLOAD:
-        impact.bonus_damage = 1 + attacker_atk
+        # 超载追加伤害：1 + 0.6×ATK（0.6 系数削弱高 ATK 敌人（如 Boss 缩放后）
+        # 自触发超载时的爆炸性追加伤害；int() 保持与感电/超导一致的整数结算）
+        impact.bonus_damage = 1 + int(0.6 * attacker_atk)
         target.status_effects.add(
             StatusEffect(EffectType.OVERLOAD, duration=1, magnitude=2, source_name="超载")
         )

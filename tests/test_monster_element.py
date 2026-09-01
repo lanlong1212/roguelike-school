@@ -98,7 +98,7 @@ def test_monster_attack_attaches_element():
 
 def test_player_initial_skills_include_shield():
     p = Player()
-    assert [s.id for s in p.skills] == ["basic_attack", "shield"]
+    assert [s.id for s in p.skills] == ["basic_attack", "ember", "shield"]
 
 
 def test_shield_skill_applies_and_absorbs():
@@ -109,7 +109,7 @@ def test_shield_skill_applies_and_absorbs():
     assert shield is not None
     assert shield.magnitude == config.SHIELD_ABSORB
     assert shield.duration == 2
-    # ATK4 vs DEF2 → 3 点伤害，护盾 5 点全吸收，HP 不变
+    # ATK4 vs DEF2 → 3 点伤害，护盾全吸收，HP 不变
     hp0 = player.stats.hp
     apply_damage(enemy, player, 1.0)
     assert player.stats.hp == hp0
