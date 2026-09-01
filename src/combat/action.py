@@ -13,14 +13,41 @@ import random
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from src.combat.damage import apply_damage
+from src.combat.damage import DamageResult, apply_damage
 from src.combat.element import ELEMENT_NAME, REACTION_NAME, Element
 from src.combat.status_effect import EFFECT_DISPLAY_NAME, EffectType, StatusEffect
+from src.core import config
 from src.utils.vector import Vector2
 
 if TYPE_CHECKING:
     from src.combat.battle_manager import BattleManager
     from src.entities.entity import Entity
+
+
+def _trigger_counter_stance(
+    manager: "BattleManager",
+    attacker: "Entity",
+    target: "Entity",
+    damage: int,
+) -> None:
+    """反击姿态：目标开启反击且被近战（相邻格）攻击 → 对攻击者反弹所受伤害的 50%。
+
+    近战判定：攻击者与被击者曼哈顿距离 1（贴脸攻击）；远程射击/AoE 不触发。
+    反击结果单独存 last_counter_result（不覆盖主伤害），供 UI 同时显示两个飘字。
+    """
+    if damage <= 0 or not getattr(target, "counter_stance_active", False):
+        return
+    if target.stats.is_dead():
+        return
+    if abs(attacker.grid_x - target.grid_x) + abs(attacker.grid_y - target.grid_y) != 1:
+        return
+    counter = max(1, int(damage * config.COUNTER_STANCE_RATIO))
+    attacker.stats.take_damage(counter)
+    manager.last_action_desc = f"{target.name} 反击 {attacker.name} -{counter} HP"
+    manager.last_counter_result = DamageResult(
+        damage=counter, is_crit=False, attacker_atk=0, target_def=0,
+    )
+    manager.last_counter_target = attacker
 
 
 class Action(ABC):
@@ -102,6 +129,8 @@ class AttackAction(Action):
         # 暴露给 UI 用于飘字
         manager.last_damage_result = result
         manager.last_damage_target = self.target
+        # 反击姿态：伙伴被近战攻击且开启反击 → 对攻击者反弹伤害
+        _trigger_counter_stance(manager, self.actor, self.target, result.damage)
 
 
 # ========== 技能行动 ==========
@@ -141,6 +170,18 @@ class SkillAction(Action):
         if self.target is None:
             manager.last_action_desc = f"{self.actor.name} 释放 {self.skill_name}（无目标）"
             return
+        # 反击姿态：自身 buff 技能（无伤害、无目标附加），本回合受近战攻击自动反击
+        if self.skill_id == "counter_stance":
+            setattr(self.actor, "counter_stance_active", True)
+            manager.last_action_desc = (
+                f"{self.actor.name} 进入反击姿态（本回合受近战攻击自动反击 50% 伤害）"
+            )
+            manager.last_damage_result = None
+            manager.last_damage_target = None
+            return
+        # 嘲讽每回合限 1 次：施放即标记（0 AP 免费技能）
+        if self.skill_id == "taunt":
+            setattr(self.actor, "taunt_used_this_turn", True)
         # 朝向目标 + 攻击动画（播完自动回 idle；同 AttackAction 支持阶段动画覆盖）
         dx = self.target.grid_x - self.actor.grid_x
         dy = self.target.grid_y - self.actor.grid_y
@@ -184,6 +225,9 @@ class SkillAction(Action):
             )
         manager.last_damage_result = result
         manager.last_damage_target = self.target if result is not None else None
+        # 反击姿态：伙伴被近战攻击且开启反击 → 对攻击者反弹伤害
+        if result is not None:
+            _trigger_counter_stance(manager, self.actor, self.target, result.damage)
 
 
 # ========== 道具行动（Day 7 接入） ==========

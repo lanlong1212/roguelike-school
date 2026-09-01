@@ -21,7 +21,8 @@ class Entity:
     """实体基类。坐标用 Vector2（浮点），网格运算时取整。"""
 
     __slots__ = ("position", "stats", "color", "name", "status_effects", "element_resist",
-                 "animator", "facing", "visual_pos", "_move_from", "_move_t", "move_duration")
+                 "animator", "facing", "visual_pos", "_move_from", "_move_t", "move_duration",
+                 "alive", "facing_left")
 
     def __init__(
         self,
@@ -34,6 +35,10 @@ class Entity:
         self.stats: Stats = stats or Stats()
         self.color: tuple[int, int, int] = color
         self.name: str = name
+        # 存活标记：战斗单位通用（敌人用 stats.is_dead()，伙伴/新角色维护 alive）
+        self.alive: bool = True
+        # 渲染镜像：目标在左侧时水平翻转（Enemy/Companion 使用，默认关闭）
+        self.facing_left: bool = False
         # Day 5：状态效果容器
         self.status_effects: StatusEffectContainer = StatusEffectContainer()
         # 元素抗性表：元素 → 倍率（1.0 正常 / 1.25 弱点 / 0.75 抗性）。默认无克制

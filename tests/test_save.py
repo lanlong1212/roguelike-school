@@ -172,7 +172,7 @@ def test_companion_save_roundtrip():
         c.learn_skill("shield_bash")
         c.stats.hp = 10
         c.stats.max_hp = 18  # 模拟成长
-        p.stats.max_ap = config.AP_MAX + 1  # 伙伴加成
+        p.stats.max_ap = config.AP_MAX + 1  # 其他改动（与伙伴无关，仅验证存档一致性）
         save_manager.save_game(
             player=p, level=3, floor_seed=12345,
             pos=Vector2(12, 34), kills=8, companion=c,
@@ -185,7 +185,7 @@ def test_companion_save_roundtrip():
         assert comp["x"] == 5 and comp["y"] == 6
         assert comp["hp"] == 10 and comp["max_hp"] == 18
         assert comp["atk"] == 3 and comp["def_"] == 3
-        assert comp["skills"] == ["taunt", "shield_bash"]
+        assert comp["skills"] == ["taunt", "counter_stance", "shield_bash"]
     finally:
         guard.cleanup()
 

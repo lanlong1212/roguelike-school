@@ -24,9 +24,9 @@ class HUD:
     """游戏 HUD 管理器。"""
 
     def __init__(self):
-        # 左上角面板：玩家状态
+        # 左上角面板：玩家状态（+ 伙伴血条）
         self.status_panel = Panel(
-            pygame.Rect(8, 8, 200, 96),
+            pygame.Rect(8, 8, 200, 124),
             color=(15, 15, 25),
             border_color=(80, 80, 100),
         )
@@ -40,9 +40,15 @@ class HUD:
             current=5, maximum=5,
             color=(60, 120, 220), label="AP",
         )
+        # 伙伴血条（仅伙伴存在且存活时显示）
+        self.companion_hp_bar = Bar(
+            pygame.Rect(14, 70, 188, 22),
+            current=0, maximum=15,
+            color=(80, 200, 120), label="伴",
+        )
         # 玩家状态效果（元素系统：冻结/感电/破甲等）
         self.status_text = Text(
-            pygame.Rect(14, 70, 188, 24),
+            pygame.Rect(14, 96, 188, 24),
             "",
             color=(255, 220, 120),
             center=False,
@@ -81,12 +87,18 @@ class HUD:
         else:
             self.toggle_rect = pygame.Rect(212, 8, 22, 22)
 
-    def update(self, player, floor, battle=None, mode=None, loot_desc: str = "") -> None:
-        """根据游戏状态更新 HUD 数据。"""
+    def update(self, player, floor, battle=None, mode=None, loot_desc: str = "", companion=None) -> None:
+        """根据游戏状态更新 HUD 数据。companion 为伙伴实体（可无），存活时显示其血条。"""
         # 血条
         self.hp_bar.set_value(player.stats.hp, player.stats.max_hp)
         # AP 条
         self.ap_bar.set_value(player.stats.ap, player.stats.max_ap)
+        # 伙伴血条（不存在/死亡时不显示）
+        if companion is not None and getattr(companion, "alive", False):
+            self.companion_hp_bar.visible = True
+            self.companion_hp_bar.set_value(companion.stats.hp, companion.stats.max_hp)
+        else:
+            self.companion_hp_bar.visible = False
         # 玩家状态效果
         effects = player.status_effects.all
         if effects:
@@ -120,6 +132,8 @@ class HUD:
             self.status_panel.draw(screen, font)
             self.hp_bar.draw(screen, font)
             self.ap_bar.draw(screen, font)
+            if self.companion_hp_bar.visible:
+                self.companion_hp_bar.draw(screen, font)
             self.status_text.draw(screen, font)
         self.info_panel.draw(screen, font)
         self.info_text.draw(screen, font)

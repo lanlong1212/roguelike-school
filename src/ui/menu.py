@@ -194,6 +194,73 @@ class InventoryMenu:
         return False
 
 
+class PotionTargetMenu:
+    """药水使用对象选择（主角 / 伙伴）。
+
+    点击对应按钮后调用 on_use(target)（由调用方执行实际用药）；
+    Esc 取消由调用方处理。显示双方当前 HP 供决策。
+    """
+
+    def __init__(self, player, companion, on_use=None):
+        self.player = player
+        self.companion = companion
+        self.on_use = on_use
+        sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
+        panel_w, panel_h = 340, 180
+        panel_x = (sw - panel_w) // 2
+        panel_y = (sh - panel_h) // 2
+        self.panel = Panel(pygame.Rect(panel_x, panel_y, panel_w, panel_h))
+        self.title = Text(
+            pygame.Rect(panel_x, panel_y + 8, panel_w, 30),
+            "选择使用对象", color=(255, 220, 80),
+        )
+        btn_w, btn_h = 280, 42
+        btn_x = panel_x + (panel_w - btn_w) // 2
+        self.btn_player = Button(
+            pygame.Rect(btn_x, panel_y + 50, btn_w, btn_h),
+            f"主角（HP {player.stats.hp}/{player.stats.max_hp}）",
+            on_click=self._use_player,
+            color=(50, 60, 90),
+        )
+        self.btn_companion = Button(
+            pygame.Rect(btn_x, panel_y + 100, btn_w, btn_h),
+            f"伙伴（HP {companion.stats.hp}/{companion.stats.max_hp}）",
+            on_click=self._use_companion,
+            color=(60, 90, 60),
+        )
+        self.buttons: list[Button] = [self.btn_player, self.btn_companion]
+
+    def _use_player(self) -> None:
+        if self.on_use:
+            self.on_use(self.player)
+
+    def _use_companion(self) -> None:
+        if self.on_use:
+            self.on_use(self.companion)
+
+    def update(self, dt: float) -> None:
+        for btn in self.buttons:
+            btn.update(dt)
+
+    def draw(self, screen, font) -> None:
+        # 半透明遮罩
+        overlay = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 120))
+        screen.blit(overlay, (0, 0))
+        self.panel.draw(screen, font)
+        self.title.draw(screen, font)
+        for btn in self.buttons:
+            btn.draw(screen, font)
+        hint = font.render("Esc 取消", True, (150, 150, 150))
+        screen.blit(hint, (self.panel.rect.right - 80, self.panel.rect.bottom - 24))
+
+    def handle_click(self, pos: tuple[int, int]) -> bool:
+        for btn in self.buttons:
+            if btn.handle_click(pos):
+                return True
+        return False
+
+
 class ShopMenu:
     """神秘商人商店界面。
 

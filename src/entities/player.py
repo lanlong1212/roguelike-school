@@ -154,7 +154,7 @@ _TALENT_POOL: list[Talent] = [
     Talent(
         id="summon_companion",
         name="召唤伙伴",
-        desc="召唤伙伴加入战斗，AP 上限 +1（伙伴阵亡后加成消失）",
+        desc="召唤一名伙伴加入战斗（独立 2 AP/回合，不消耗主角 AP）",
     ),
 ]
 
@@ -167,12 +167,7 @@ def get_talent_pool() -> list[Talent]:
 
 
 def _apply_talent_effect(player: "Player", talent_id: str) -> None:
-    """天赋学习效果：永久修改玩家属性。新增天赋时在此分支。
-
-    注意：summon_companion 故意不加分支——它的效果（创建伙伴实体、
-    AP 上限 +1）由 play_state 层处理。读档时天赋重放也会经过这里，
-    若在此加 AP 会导致与实体恢复叠加翻倍。
-    """
+    """天赋学习效果：永久修改玩家属性。新增天赋时在此分支。"""
     if talent_id == "hp_up":
         increase = max(1, round(player.stats.max_hp * 0.10))
         player.stats.max_hp += increase
@@ -210,6 +205,11 @@ class Player(Entity):
         self.gold: int = config.START_GOLD
         # 已学天赋 id 列表（被动天赋，学习即生效）
         self.talents: list[str] = []
+        # 守护光环（伙伴天生被动）：伙伴存活时主角每回合首次受伤 -2。
+        # guardian_halo_active 由 battle_manager 在回合开始/伙伴阵亡时维护；
+        # guardian_halo_used 每回合首次受伤后置 True，回合开始重置。
+        self.guardian_halo_active: bool = False
+        self.guardian_halo_used: bool = False
         # 动画：idle/walk/attack × 4 朝向（目录帧序列，缺素材自动跳过）
         self._build_animator()
 

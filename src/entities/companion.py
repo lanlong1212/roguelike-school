@@ -1,12 +1,16 @@
 """
 可控伙伴模块。
 
-定位：肉盾/辅助单位，与主角共享回合与共享 AP 池。
-来源：休息房天赋"召唤伙伴"（后续阶段接入）。
+定位：肉盾/辅助单位，与主角共享回合（同一回合内行动），但持有独立小 AP 池。
+来源：休息房天赋"召唤伙伴"。
 属性：初始固定 15HP / 3ATK / 3DEF / 移 3 格，成长只走休息房伙伴阶段。
+独立 AP：每回合固定 2 点（config.COMPANION_AP_MAX），不消耗主角 AP；
+        行动结算按 current_actor 各自 stats 扣费（见 battle_manager）。
 技能：
-    taunt        嘲讽    1 AP  3 格  无伤害，施加"嘲讽"状态强制敌人攻击伙伴
-    shield_bash  盾击    2 AP  1 格  0.8× 物理伤害，50% 眩晕 1 回合
+    taunt          嘲讽      0 AP  3 格  无伤害，施加"嘲讽"状态强制敌人攻击伙伴（每回合限 1 次）
+    counter_stance 反击姿态  1 AP  自身   本回合受近战攻击自动反击所受伤害的 50%
+    shield_bash    盾击      2 AP  1 格  0.8× 物理伤害，50% 眩晕 1 回合
+天生被动：守护光环——伙伴存活时，主角每回合首次受伤 -2（GUARDIAN_HALO_REDUCTION）。
 说明：本模块做数据层（实体 + 技能配置），技能执行与状态
       效果已由 SkillAction / StatusEffect 链路支持（阶段 4）。
 """
@@ -27,13 +31,22 @@ _COMPANION_SKILLS: list[Skill] = [
     Skill(
         id="taunt",
         name="嘲讽",
-        ap_cost=1,
+        ap_cost=0,
         range_cells=3,
         multiplier=0.0,
-        desc="嘲讽 3 格内敌人，强制其 2 回合内攻击伙伴",
+        desc="嘲讽 3 格内敌人，强制其 2 回合内攻击伙伴（每回合限 1 次）",
         element=Element.NONE,
         apply_effect=EffectType.TAUNT,
         effect_duration=2,
+    ),
+    Skill(
+        id="counter_stance",
+        name="反击姿态",
+        ap_cost=1,
+        range_cells=0,
+        multiplier=0.0,
+        desc="自身：本回合受近战攻击时自动反击所受伤害的 50%",
+        element=Element.NONE,
     ),
     Skill(
         id="shield_bash",
@@ -54,12 +67,12 @@ class Companion(Entity):
     """可控伙伴。肉盾/辅助定位，与主角共享回合与 AP 池。"""
 
     def __init__(self, position: Vector2 | None = None):
-        # 伙伴 AP 字段仅占位（战斗走共享池，见阶段 2），数值填默认即可
+        # 独立 AP 池：每回合固定 2 点（不消耗主角 AP），回合开始由 battle_manager 重置
         stats = Stats(
             max_hp=15,
             atk=3,
             def_=3,
-            max_ap=config.AP_MAX,
+            max_ap=config.COMPANION_AP_MAX,
             move_range=3,
         )
         super().__init__(
@@ -68,13 +81,17 @@ class Companion(Entity):
             color=config.COLOR_COMPANION,
             name="Companion",
         )
-        # 初始技能：仅嘲讽（深拷贝，避免与池共享）
-        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _COMPANION_SKILLS[:1]]
+        # 初始技能：嘲讽 + 反击姿态（深拷贝，避免与池共享）；盾击经休息房/测试学习
+        self.skills: list[Skill] = [Skill(**s.__dict__) for s in _COMPANION_SKILLS[:2]]
         self.selected_skill: Skill | None = None
         self.learned_shield_bash: bool = False
         self.alive: bool = True
         # 渲染镜像用：伙伴在主角左侧时水平翻转（与 Enemy 的 facing_left 逻辑一致）
         self.facing_left: bool = False
+        # 嘲讽每回合限 1 次：施放即置 True，玩家回合开始由 battle_manager 重置
+        self.taunt_used_this_turn: bool = False
+        # 反击姿态：施放后本回合有效，玩家回合开始清除（见 battle_manager._start_player_turn）
+        self.counter_stance_active: bool = False
 
     # ========== 技能接口（与 Player 保持一致，供阶段 2 战斗管理器复用） ==========
 

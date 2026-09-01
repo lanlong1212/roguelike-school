@@ -14,9 +14,9 @@
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from src.combat.action import Action, EndTurnAction
+from src.combat.action import Action, EndTurnAction, SkillAction
 from src.combat.status_effect import EffectType
 from src.entities.entity import Entity
 
@@ -42,14 +42,18 @@ class BattleManager:
         player: "Player",
         enemies: list[Entity],
         tilemap: "TileMap",
-        companion: "Companion | None" = None,
+        companions: "list[Companion] | None" = None,
     ):
         self.player = player
-        self.companion: "Companion | None" = companion
+        # 友方单位列表（玩家 + 伙伴们）：回合 AP 重置、状态结算、受控切换、
+        # UI 头像栏全部按此列表驱动——未来新增同类角色只需传入列表即可。
+        # 死亡伙伴保留引用（alive=False）供头像栏灰化显示。
+        self.allies: list[Entity] = [player]
+        if companions:
+            self.allies.extend(companions)
         self.current_actor: Entity = player
         self.enemies: list[Entity] = enemies
         self.tilemap = tilemap
-        
 
         # 回合状态
         self.phase: TurnPhase = TurnPhase.PLAYER_TURN
@@ -63,16 +67,29 @@ class BattleManager:
         # Day 5：最近一次伤害结果与目标（供 UI 生成飘字）
         self.last_damage_result = None
         self.last_damage_target = None
+        # 反击姿态触发的反击结果与目标（与主伤害分离，UI 可同时显示两个飘字）
+        self.last_counter_result = None
+        self.last_counter_target = None
+        # 守护光环：伙伴存活时主角每回合首次受伤 -2（伙伴被动，见 damage.apply_damage）
+        self.player.guardian_halo_active = self.companion is not None and self.companion.alive
+        self.player.guardian_halo_used = False
 
 
         # ========== 受控实体与友方单位 ==========
 
     @property
     def friendly_entities(self) -> list[Entity]:
-        """友方单位列表（主角 + 存活的伙伴）。敌人 AI 目标选择用（阶段 4）。"""
-        if self.companion is not None and self.companion.alive:
-            return [self.player, self.companion]
-        return [self.player]
+        """存活友方单位列表（玩家 + 存活的伙伴们）。敌人 AI 目标选择、回合结算用。"""
+        return [a for a in self.allies if a.alive]
+
+    @property
+    def companion(self) -> "Companion | None":
+        """首个伙伴（兼容现有引用）。返回列表里第一个非玩家单位；
+        若将来需要按角色类型区分，可在此按类型过滤。"""
+        for a in self.allies:
+            if a is not self.player:
+                return cast("Companion", a)
+        return None
 
     def attack_target(self, enemy: Entity) -> Entity:
         """
@@ -92,9 +109,9 @@ class BattleManager:
         """
         if self.phase != TurnPhase.PLAYER_TURN:
             return False
-        if actor is not self.player and actor is not self.companion:
+        if actor not in self.allies:
             return False
-        if actor is self.companion and (self.companion is None or not self.companion.alive):
+        if actor is not self.player and not actor.alive:
             return False
         self.current_actor = actor
         return True
@@ -108,24 +125,31 @@ class BattleManager:
         # 冻结/眩晕：本回合不能行动（结束回合除外）——判断当前受控实体
         if self.current_actor.status_effects.is_disabled() and not isinstance(action, EndTurnAction):
             return False
-        # 共享 AP 池：所有友方行动统一从主角 stats 扣除（伙伴不独立持池）
-        return self.player.stats.ap >= action.ap_cost
+        # 嘲讽每回合限 1 次（0 AP 免费技能，防止无限嘲讽刷仇恨；非伙伴实体无此字段）
+        if (
+            isinstance(action, SkillAction)
+            and action.skill_id == "taunt"
+            and getattr(self.current_actor, "taunt_used_this_turn", False)
+        ):
+            return False
+        # 独立 AP 池：按当前受控实体各自 stats 扣费（伙伴每回合固定 2 点）
+        return self.current_actor.stats.ap >= action.ap_cost
 
     def execute_action(self, action: Action) -> bool:
         """
         执行一个玩家行动。AP 不足或非玩家回合返回 False。
         执行后检查胜负与回合结束条件。
-        伙伴与主角共享 AP 池：扣 AP 统一从 player.stats 扣除（召唤伙伴时 max_ap +1）。
+        独立 AP 池：扣 AP 按当前受控实体各自 stats 扣除（伙伴 2 点/回合，不消耗主角）。
         """
         if not self.can_execute(action):
             return False
 
         # 扣 AP（EndTurnAction cost=0 也会进入这里）
-        self.player.stats.spend_ap(action.ap_cost)
+        self.current_actor.stats.spend_ap(action.ap_cost)
         # 执行行动效果
         action.execute(self)
-        # 行动可能造成伙伴阵亡（AoE 溅射等）：标记死亡并切回主角
-        self._handle_companion_death()
+        # 行动可能造成友方单位阵亡（AoE 溅射等）：标记死亡并切回主角
+        self._handle_ally_death()
 
         # 执行后检查胜负
         if self._check_player_won():
@@ -135,10 +159,12 @@ class BattleManager:
         # 仅玩家主动结束回合才切换到敌人回合；AP 耗尽后留在玩家回合，
         # 由玩家手动点击结束（UI 层据此提示"AP已耗尽"）
         if isinstance(action, EndTurnAction):
-            self.player.status_effects.on_turn_end(self.player)
+            # 玩家回合结束：所有存活友方单位结算回合末状态（冻结/眩晕等时长递减）
+            for a in self.friendly_entities:
+                a.status_effects.on_turn_end(a)
             self._start_enemy_turn()
-        elif self.player.stats.ap <= 0:
-            # AP 归零：提示玩家手动结束回合
+        elif self.current_actor.stats.ap <= 0:
+            # 当前受控实体 AP 归零：提示手动结束回合（可 Tab 切到其他友方继续行动）
             self.last_action_desc = "AP已耗尽，请手动结束回合"
 
         return True
@@ -155,18 +181,22 @@ class BattleManager:
             return False
         actor.stats.spend_ap(action.ap_cost)
         action.execute(self)
-        # 敌人行动可能击倒伙伴：标记死亡，后续敌人不再以尸体为目标
-        self._handle_companion_death()
+        # 敌人行动可能击倒友方单位：标记死亡，后续敌人不再以尸体为目标
+        self._handle_ally_death()
         return True
 
-    def _handle_companion_death(self) -> None:
-        """伙伴 HP 归零：标记 alive=False（敌人目标选择/受控切换据此排除），
-        若当前受控实体是伙伴则切回主角。AP 上限回退由 play_state 处理。"""
-        c = self.companion
-        if c is not None and c.alive and c.stats.is_dead():
-            c.alive = False
-            if self.current_actor is c:
-                self.current_actor = self.player
+    def _handle_ally_death(self) -> None:
+        """友方单位 HP 归零：标记 alive=False（AI 目标选择/受控切换据此排除，
+        头像栏保留灰化显示）。若当前受控实体阵亡则切回主角。
+        伙伴死亡本局永久消失由 play_state 层处理。"""
+        for a in self.allies:
+            if a is not self.player and a.alive and a.stats.is_dead():
+                a.alive = False
+                if self.current_actor is a:
+                    self.current_actor = self.player
+        # 伙伴全部阵亡 → 守护光环失效（伙伴存活时主角每回合首次受伤才 -2）
+        if not any(a is not self.player and a.alive for a in self.allies):
+            self.player.guardian_halo_active = False
 
     def end_player_turn(self) -> None:
         """玩家主动结束回合。"""
@@ -240,11 +270,25 @@ class BattleManager:
         for enemy in self.enemies:
             if not enemy.stats.is_dead():
                 enemy.status_effects.on_turn_end(enemy)
-        # 玩家回合开始：附着计时 + 状态处理
-        self.player.status_effects.tick_aura()
-        logs = self.player.status_effects.on_turn_start(self.player)
-        self.last_status_logs = logs
-        self._reset_ap_with_slow(self.player)
+        # 玩家回合开始：所有存活友方单位各自结算状态并重置独立 AP 池
+        # （玩家 5 点，伙伴 2 点；减速时上限 -1）
+        self.last_status_logs = []
+        for a in self.friendly_entities:
+            a.status_effects.tick_aura()
+            logs = a.status_effects.on_turn_start(a)
+            if logs:
+                self.last_status_logs += logs
+            self._reset_ap_with_slow(a)
+            # 伙伴回合标记：嘲讽每回合限 1 次、反击姿态仅本回合有效
+            if hasattr(a, "taunt_used_this_turn"):
+                setattr(a, "taunt_used_this_turn", False)
+            if hasattr(a, "counter_stance_active"):
+                setattr(a, "counter_stance_active", False)
+        # 守护光环：每回合重置"首次受伤"标记，并在伙伴存活时激活
+        self.player.guardian_halo_used = False
+        self.player.guardian_halo_active = any(
+            a is not self.player and a.alive for a in self.allies
+        )
 
     # ========== 胜负判定 ==========
 

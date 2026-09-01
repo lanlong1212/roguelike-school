@@ -81,8 +81,10 @@ def _serialize_inventory(player) -> tuple[list, str | None]:
 def _serialize_companion(companion) -> dict:
     """序列化伙伴状态。
 
-    ap_bonus_active 与伙伴存活绑定（伙伴死亡后 AP 上限加成已回退），
-    读档时据此决定是否重新挂载伙伴并 +1 AP——保证不重复叠加。
+    ap_bonus_active 为旧版字段（曾表示"伙伴存活 → 主角 AP 上限 +1"）。
+    新版伙伴使用独立 AP 池（2 点/回合），不再影响主角 AP；该字段仅
+    保留兼容旧档读取，读档时按 alive 判断即可。将来新增多角色可把
+    此单字段扩展为 allies: [...] 数组，读取时兼容旧的 companion 字段。
     """
     if companion is None:
         return {"exists": False, "alive": False, "ap_bonus_active": False}

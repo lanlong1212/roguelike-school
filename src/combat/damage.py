@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from src.combat.element import Element, apply_element_impact
 from src.combat.status_effect import EffectType
+from src.core import config
 
 if TYPE_CHECKING:
     from src.combat.element import Reaction
@@ -118,6 +119,14 @@ def apply_damage(
     # 融化（火+冰 反应）：受击伤害 ×1.25
     if target.status_effects.has(EffectType.MELT):
         result.damage = int(result.damage * 1.25)
+
+    # 守护光环（伙伴被动）：伙伴存活时主角每回合首次受伤 -2。
+    # 激活/重置标志由 battle_manager 维护；无字段实体（敌人）默认不触发。
+    if getattr(target, "guardian_halo_active", False) and not getattr(
+        target, "guardian_halo_used", True
+    ):
+        result.damage = max(1, result.damage - config.GUARDIAN_HALO_REDUCTION)
+        setattr(target, "guardian_halo_used", True)
 
     # 护盾吸收
     remaining = target.status_effects.absorb_damage(result.damage)
