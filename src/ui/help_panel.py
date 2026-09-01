@@ -91,7 +91,7 @@ _PAGE_HEADER = {
     2: "每层 6 个房间：1 Boss + 1 精英 + 1 商店 + 1 休息 + 2 战斗",
     3: "战斗中常见的控制 / 增益 / 减益状态",
     4: "召唤后获得独立 AP 的友方单位，可 Tab 切换操控",
-    5: "击败精英 / Boss 或商店购买可获得遗物，未获取条目涂黑显示",
+    5: "击败精英 / Boss 或商店购买可获得遗物，共 8 种",
 }
 
 
@@ -103,7 +103,8 @@ class HelpPanel:
 
     def __init__(self, player=None):
         self.current_tab: int = 0  # 当前选中标签下标
-        # 玩家引用：遗物页按 owned_relics 显示已解锁/未获取；主菜单打开图鉴时为空
+        # 保留 player 参数以兼容暂停菜单 / 主菜单调用方；
+        # 遗物页已改为全量展示（不再按 owned_relics 涂黑），此处不再读取玩家数据
         self.player = player
         # 面板几何（居中）
         sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
@@ -221,7 +222,7 @@ class HelpPanel:
         elif self.current_tab == 4:
             self._draw_entry_list(screen, font, _PAGE_COMPANION, row_h=36, name_w=130)
         else:
-            # 遗物页（5）：全部遗物，未获取涂黑
+            # 遗物页（5）：全部遗物统一展示
             self._draw_relic_page(screen, font, small_font)
 
     def _draw_entry_list(self, screen, font, entries, row_h: int, name_w: int) -> None:
@@ -261,48 +262,28 @@ class HelpPanel:
             y += 42
 
     def _draw_relic_page(self, screen, font, small_font) -> None:
-        """遗物页：全部 8 个遗物逐行展示。
-        已获取（owned_relics 命中）：色块图标 + 金色名称 + 效果描述。
-        未获取：涂黑矩形 + "???" 名称 + "尚未获得" 提示。
-        主菜单打开图鉴时无玩家引用，全部显示为未获取。"""
-        owned = (
-            getattr(self.player, "owned_relics", set())
-            if self.player is not None else set()
-        )
+        """遗物页：全部 8 个遗物逐行展示（色块图标 + 金色名称 + 效果描述）。
+
+        改版说明：不再按 owned_relics 区分已获取 / 未获取，
+        所有遗物统一正常显示名称与描述（图鉴不再涂黑、不显示 "???" / "尚未获得"）。"""
         x, y = self._content_x, self._content_top + 8
         icon_size = 24
         row_h = 48
-        for rid, data in RELICS.items():
-            unlocked = rid in owned
-            if unlocked:
-                # 已获取：色块图标 + 名称 + 描述
-                pygame.draw.rect(
-                    screen, data["color"], (x, y, icon_size, icon_size), border_radius=4
-                )
-                pygame.draw.rect(
-                    screen, (20, 20, 30), (x, y, icon_size, icon_size), 1, border_radius=4
-                )
-                ch = data.get("short") or data["name"][:1]
-                ch_s = font.render(ch, True, (20, 20, 30))
-                screen.blit(ch_s, ch_s.get_rect(center=(x + icon_size // 2, y + icon_size // 2)))
-                name_s = font.render(data["name"], True, (255, 220, 120))
-                screen.blit(name_s, (x + icon_size + 10, y))
-                desc_s = small_font.render(data["description"], True, (215, 215, 225))
-                screen.blit(desc_s, (x + icon_size + 10, y + 22))
-            else:
-                # 未获取：涂黑矩形 + ???（图鉴未解锁）
-                dark = pygame.Surface((icon_size, icon_size))
-                dark.fill((12, 12, 16))
-                screen.blit(dark, (x, y))
-                pygame.draw.rect(
-                    screen, (60, 60, 75), (x, y, icon_size, icon_size), 1, border_radius=4
-                )
-                q_s = small_font.render("???", True, (90, 90, 105))
-                screen.blit(q_s, q_s.get_rect(center=(x + icon_size // 2, y + icon_size // 2)))
-                name_s = font.render("???", True, (110, 110, 125))
-                screen.blit(name_s, (x + icon_size + 10, y))
-                note_s = small_font.render("尚未获得", True, (110, 110, 125))
-                screen.blit(note_s, (x + icon_size + 10, y + 22))
+        for data in RELICS.values():
+            # 色块图标 + 名称 + 描述（全部遗物统一展示）
+            pygame.draw.rect(
+                screen, data["color"], (x, y, icon_size, icon_size), border_radius=4
+            )
+            pygame.draw.rect(
+                screen, (20, 20, 30), (x, y, icon_size, icon_size), 1, border_radius=4
+            )
+            ch = data.get("short") or data["name"][:1]
+            ch_s = font.render(ch, True, (20, 20, 30))
+            screen.blit(ch_s, ch_s.get_rect(center=(x + icon_size // 2, y + icon_size // 2)))
+            name_s = font.render(data["name"], True, (255, 220, 120))
+            screen.blit(name_s, (x + icon_size + 10, y))
+            desc_s = small_font.render(data["description"], True, (215, 215, 225))
+            screen.blit(desc_s, (x + icon_size + 10, y + 22))
             y += row_h
 
     @staticmethod
