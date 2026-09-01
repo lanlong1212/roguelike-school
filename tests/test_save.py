@@ -5,6 +5,7 @@
 - save_game → load_game 数据往返一致
 - apply_save_to_player 恢复属性/金币/背包/装备/技能
 - 武器加成剔除与重挂（装备后保存，读档后加成不翻倍）
+- 遗物：relics/owned_relics/layer_guard_used 往返，巨人之力重放不叠加
 - clear_save 后无存档；损坏存档文件容错返回 None
 
 存档路径指向临时目录（tempfile），不污染真实存档。
@@ -122,6 +123,63 @@ def test_weapon_bonus_not_doubled():
         assert fresh.stats.atk == total_atk
         assert fresh.inventory.equipped_weapon is not None
         assert fresh.inventory.equipped_weapon.id == "iron_sword"
+    finally:
+        guard.cleanup()
+
+
+def test_relic_save_restore():
+    """遗物存档：relics/owned_relics/layer_guard_used 往返一致，巨人之力重放正确。"""
+    from src.core import config
+    from src.items.relics import grant_relic
+    guard = _SaveDirGuard()
+    try:
+        p = _make_player()
+        assert grant_relic(p, "giant_power")  # atk 6→9, max_ap 5→4
+        assert grant_relic(p, "light_boots")
+        p.layer_guard_used = True  # 守护符本层已使用
+        _do_save(p)
+
+        data = save_manager.load_game()
+        assert data["player"]["relics"] == ["giant_power", "light_boots"]
+        assert data["player"]["layer_guard_used"] is True
+
+        fresh = Player()
+        fresh.stats.max_hp = 20
+        save_manager.apply_save_to_player(fresh, data)
+
+        # 携带列表 / 图鉴解锁集合 / 守护符使用标记全部恢复
+        assert fresh.relics == ["giant_power", "light_boots"]
+        assert "light_boots" in fresh.owned_relics
+        assert fresh.layer_guard_used is True
+        # 巨人之力属性：基础 6+3=9；max_ap 由重放链决定 5-1=4
+        assert fresh.stats.atk == 9
+        assert fresh.stats.max_ap == config.AP_MAX - 1
+    finally:
+        guard.cleanup()
+
+
+def test_relic_replay_no_duplicate():
+    """重复读档 / 重复重放遗物属性不叠加（幂等）。"""
+    from src.core import config
+    from src.items.relics import grant_relic
+    guard = _SaveDirGuard()
+    try:
+        p = _make_player()
+        assert grant_relic(p, "giant_power")
+        assert p.stats.atk == 9 and p.stats.max_ap == config.AP_MAX - 1
+        _do_save(p)
+
+        data = save_manager.load_game()
+        fresh = Player()
+        fresh.stats.max_hp = 20
+        save_manager.apply_save_to_player(fresh, data)
+        atk, ap = fresh.stats.atk, fresh.stats.max_ap
+        # 再次重放（模拟重复调用）不叠加
+        fresh.apply_relic_effects()
+        assert fresh.stats.atk == atk and fresh.stats.max_ap == ap
+        # 重复执行完整读档恢复也不叠加
+        save_manager.apply_save_to_player(fresh, data)
+        assert fresh.stats.atk == atk and fresh.stats.max_ap == ap
     finally:
         guard.cleanup()
 
