@@ -34,3 +34,7 @@ saves/
 
 # 自动生成的 Obsidian 关系图谱
 docs/obsidian-vault/
+
+# 本地文档模板（不入库）
+文档/*.doc
+文档/*.docx
