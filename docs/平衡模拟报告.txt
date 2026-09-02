@@ -53,3 +53,37 @@
 1. L1 Boss 0% 胜率：近战无远程手段打不过风筝的骷髅+精英；Boss HP80/ATK8 对 20HP 玩家过狠
 2. L3 无装备时缺口 80 vs 60：楼层缩放 ×1.4 对 Boss 过狠；玩家实测爽局依赖装备
 3. 治疗药水 15 HP 相对后期单次 10+ 伤害偏弱，药水携带量 vs 回血量的性价比可再权衡
+
+============================== 遗物平衡对照（2026-09-02） ==============================
+
+生成方式：tests/sim_relic_compare.py 200（临时脚本，monkey-patch 玩家构造函数注入遗物，
+         复用 sim_by_kit 感电流 + balance_sim 基础构筑；每场景 200 场，真实房间地形）
+对照档位：无遗物 / 满 8 遗物 / 单遗物（7 个战斗向遗物；greedy_eye 纯经济向跳过）
+注意：守护符(guardian_charm)在模拟中每场战斗挡一次（每场新玩家实例），
+      真实为每层一次 → 其模拟胜率偏乐观。
+
+[感电流（sim_by_kit electro，含连招策略）]
+  基线胜率：L1 boss 100% / L2 boss 89% / L3 boss 50%（均承受 38.1 HP）
+  满遗物  ：L1 boss 100% / L2 boss 98% / L3 boss 99%（均承受 0.9 HP，用药 0.04）
+  L3 Boss 单遗物胜率：light_boots 100% > guardian_charm 84% > giant_power 82% >
+                       ice_heart 62% > element_echo 54% ≈ war_drum 55% ≈ fire_seed 52%（基线 50%）
+
+[基础构筑（balance_sim，初始3技能+冲锋斩，历史基准构筑）]
+  基线胜率：L1 elite 40% / L1 boss 4% / L2 boss 90% / L3 boss 27%
+  满遗物  ：L1 elite 100% / L1 boss 21% / L2 boss 98% / L3 boss 100%
+  L1 elite 单遗物：giant_power 83% > light_boots 68% > guardian_charm 39% ≈ element_echo 35%（基线 40%）
+  L1 boss  单遗物：giant_power 32% > guardian_charm 8% ≈ element_echo 4% ≈ light_boots 1%（基线 4%）
+  L3 boss  单遗物：giant_power 94% > light_boots 86% > guardian_charm 64% > element_echo 33%（基线 27%）
+
+结论：
+1. L3 后期难度被遗物显著打破：单个 light_boots 或 giant_power 即可把 L3 Boss
+   从 27~50% 提升到 86~100%；满遗物下 L3 承伤趋近于 0（99% 胜率 / 用药 0.04）。
+2. light_boots（轻羽靴）超模：设计意图是"AP 经济"，实战中打带跑策略每回合必移动，
+   等价于每回合 +1 AP；感电流单遗物 L3 boss 100%，与满遗物 99% 几乎持平 → 建议削弱。
+3. giant_power（巨人之力）万金油强：ATK+3 对近战构筑质变（基础 L1 elite 40%→83%），
+   AP-1 副作用取舍有限；可考虑 ATK+3 → +2 微调。
+4. 流派依赖遗物属正常定位：fire_seed（仅火系）/ element_echo（仅反应）/ war_drum（多敌房才强）
+   对不适配流派≈无效（感电流 fire_seed 52%≈基线），弱是"对不准"而非数值低。
+5. L1 结构性难点未被遗物改变：基础构筑满遗物 L1 boss 仍仅 21% —— 近战打远程 Boss
+   是构筑问题；且遗物掉落源头（精英/Boss）恰是打不过的敌人，L1 存在负反馈循环。
+   感电流 L1 全 100% 印证：出路在构筑/技能而非遗物。
