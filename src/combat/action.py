@@ -50,33 +50,6 @@ def _trigger_counter_stance(
     manager.last_counter_target = attacker
 
 
-def _trigger_ice_heart(
-    manager: "BattleManager",
-    attacker: "Entity",
-    target: "Entity",
-) -> None:
-    """遗物：冰心 —— 玩家被近战攻击后，50% 概率冻结攻击者 1 回合。
-
-    近战判定同反击姿态：曼哈顿距离 1（贴脸攻击）；远程射击/AoE 不触发。
-    仅玩家拥有此遗物（target 为玩家时 relics 含 ice_heart）。
-    冻结状态复用现有 FREEZE（跳过行动），由战斗管理器统一计时。
-    """
-    if "ice_heart" not in getattr(target, "relics", []):
-        return
-    # 双方任一阵亡不触发（玩家已被击杀时无意义）
-    if target.stats.is_dead() or attacker.stats.is_dead():
-        return
-    # 非贴脸攻击（远程/技能溅射）不触发
-    if abs(attacker.grid_x - target.grid_x) + abs(attacker.grid_y - target.grid_y) != 1:
-        return
-    if random.random() >= 0.5:
-        return
-    attacker.status_effects.add(
-        StatusEffect(EffectType.FREEZE, duration=1, source_name="冰心")
-    )
-    manager.last_action_desc += f" {attacker.name} 被冰心冻结 1 回合"
-
-
 class Action(ABC):
     """行动基类。所有具体行动继承此类并实现 execute()。"""
 
@@ -158,8 +131,6 @@ class AttackAction(Action):
         manager.last_damage_target = self.target
         # 反击姿态：伙伴被近战攻击且开启反击 → 对攻击者反弹伤害
         _trigger_counter_stance(manager, self.actor, self.target, result.damage)
-        # 遗物：冰心 —— 玩家被近战攻击后 50% 冻结攻击者
-        _trigger_ice_heart(manager, self.actor, self.target)
 
 
 # ========== 技能行动 ==========
@@ -273,8 +244,6 @@ class SkillAction(Action):
         # 反击姿态：伙伴被近战攻击且开启反击 → 对攻击者反弹伤害
         if result is not None:
             _trigger_counter_stance(manager, self.actor, self.target, result.damage)
-            # 遗物：冰心 —— 玩家被近战攻击后 50% 冻结攻击者
-            _trigger_ice_heart(manager, self.actor, self.target)
 
 
 # ========== 道具行动（Day 7 接入） ==========

@@ -15,7 +15,6 @@ import pygame
 
 from src.core import config
 from src.items.item import Item, ItemType
-from src.items.relics import RELICS
 from src.ui.icons import fit_icon, get_element_icon, get_item_icon
 from src.ui.ui_element import Button, Panel, Text
 
@@ -23,10 +22,10 @@ from src.ui.ui_element import Button, Panel, Text
 class PauseMenu:
     """暂停菜单。"""
 
-    def __init__(self, on_resume=None, on_quit=None, on_help=None):
+    def __init__(self, on_resume=None, on_quit=None):
         sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
-        # 中央面板（3 个按钮：继续 / 图鉴 / 返回主菜单）
-        panel_w, panel_h = 300, 262
+        # 中央面板
+        panel_w, panel_h = 300, 200
         panel_x = (sw - panel_w) // 2
         panel_y = (sh - panel_h) // 2
         self.panel = Panel(pygame.Rect(panel_x, panel_y, panel_w, panel_h))
@@ -39,20 +38,15 @@ class PauseMenu:
         btn_w, btn_h = 220, 36
         btn_x = panel_x + (panel_w - btn_w) // 2
         self.btn_resume = Button(
-            pygame.Rect(btn_x, panel_y + 64, btn_w, btn_h),
+            pygame.Rect(btn_x, panel_y + 70, btn_w, btn_h),
             "继续游戏 (ESC)", on_click=on_resume,
         )
-        self.btn_help = Button(
-            pygame.Rect(btn_x, panel_y + 112, btn_w, btn_h),
-            "图鉴 (F1)", on_click=on_help,
-            color=(60, 70, 120),
-        )
         self.btn_quit = Button(
-            pygame.Rect(btn_x, panel_y + 160, btn_w, btn_h),
+            pygame.Rect(btn_x, panel_y + 120, btn_w, btn_h),
             "返回主菜单", on_click=on_quit,
             color=(80, 30, 30),
         )
-        self.buttons: list[Button] = [self.btn_resume, self.btn_help, self.btn_quit]
+        self.buttons: list[Button] = [self.btn_resume, self.btn_quit]
 
     def update(self, dt: float) -> None:
         for btn in self.buttons:
@@ -77,17 +71,12 @@ class PauseMenu:
 
 
 class InventoryMenu:
-    """背包界面：物品 / 遗物 两个标签页。"""
+    """背包界面。"""
 
-    # 标签页名称（顺序即显示顺序）
-    TAB_NAMES = ["物品", "遗物"]
-
-    def __init__(self, inventory, player=None, on_use_item=None, on_close=None):
+    def __init__(self, inventory, on_use_item=None, on_close=None):
         self.inventory = inventory
-        self.player = player  # 遗物页读取 player.relics（可为 None 时显示空提示）
         self.on_use_item = on_use_item
         self.on_close = on_close
-        self.current_tab: int = 0  # 0=物品, 1=遗物
         sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
         # 面板
         panel_w, panel_h = 600, 400
@@ -104,15 +93,10 @@ class InventoryMenu:
             pygame.Rect(panel_x + panel_w - 100, panel_y + 10, 80, 28),
             "关闭 (B)", on_click=None, color=(80, 30, 30),
         )
-        # 标签页矩形（标题下方横排）
-        self.tab_rects = [
-            pygame.Rect(panel_x + 20 + i * 88, panel_y + 44, 80, 26)
-            for i in range(len(self.TAB_NAMES))
-        ]
         # 装备槽区域
-        self.equip_rect = pygame.Rect(panel_x + 20, panel_y + 82, 180, 100)
+        self.equip_rect = pygame.Rect(panel_x + 20, panel_y + 60, 180, 100)
         # 物品栏区域
-        self.slots_rect = pygame.Rect(panel_x + 220, panel_y + 82, 360, 320)
+        self.slots_rect = pygame.Rect(panel_x + 220, panel_y + 60, 360, 320)
 
     def update(self, dt: float) -> None:
         self.btn_close.update(dt)
@@ -126,100 +110,58 @@ class InventoryMenu:
         self.panel.draw(screen, font)
         self.title.draw(screen, font)
         self.btn_close.draw(screen, font)
-        # 标签页（物品 / 遗物）
-        for i, rect in enumerate(self.tab_rects):
-            selected = i == self.current_tab
-            bg = (60, 80, 120) if selected else (30, 30, 40)
-            pygame.draw.rect(screen, bg, rect, border_radius=4)
-            border = config.COLOR_TEXT_HIGHLIGHT if selected else (90, 90, 100)
-            pygame.draw.rect(screen, border, rect, 2 if selected else 1, border_radius=4)
-            color = (255, 235, 170) if selected else (200, 200, 212)
-            tab_text = font.render(self.TAB_NAMES[i], True, color)
-            screen.blit(tab_text, tab_text.get_rect(center=rect.center))
-        # 物品页：装备槽 + 物品栏（原背包内容）
-        if self.current_tab == 0:
-            # 装备槽
-            pygame.draw.rect(screen, (30, 30, 40), self.equip_rect, border_radius=4)
-            pygame.draw.rect(screen, (120, 100, 60), self.equip_rect, 2, border_radius=4)
-            eq_label = font.render("装备", True, (220, 200, 100))
-            screen.blit(eq_label, (self.equip_rect.x + 6, self.equip_rect.y + 4))
-            # 显示当前武器
-            weapon = self.inventory.equipped_weapon
-            if weapon:
-                wx = self.equip_rect.x + 6
-                wy = self.equip_rect.y + 28
-                icon = get_item_icon(weapon.id)
-                if icon is not None:
-                    screen.blit(fit_icon(icon, 20), (wx, wy + 1))
-                    wx += 24
-                w_text = font.render(f"武器: {weapon.name}", True, (255, 255, 255))
-                screen.blit(w_text, (wx, wy))
-                mod = weapon.stat_modifiers
-                mod_text = font.render(
-                    f"ATK+{mod.atk_bonus} DEF+{mod.def_bonus}", True, (180, 180, 180)
-                )
-                screen.blit(mod_text, (self.equip_rect.x + 6, self.equip_rect.y + 50))
-            else:
-                w_text = font.render("武器: 无", True, (150, 150, 150))
-                screen.blit(w_text, (self.equip_rect.x + 6, self.equip_rect.y + 28))
-
-            # 物品栏（5 列 × 2 行 = 10 槽）
-            slot_size = 64
-            gap = 8
-            for i in range(self.inventory.MAX_SLOTS):
-                col = i % 5
-                row = i // 5
-                sx = self.slots_rect.x + col * (slot_size + gap)
-                sy = self.slots_rect.y + row * (slot_size + gap)
-                rect = pygame.Rect(sx, sy, slot_size, slot_size)
-                pygame.draw.rect(screen, (30, 30, 40), rect, border_radius=4)
-                pygame.draw.rect(screen, (80, 80, 100), rect, 1, border_radius=4)
-                item = self.inventory.get_item(i)
-                if item:
-                    # 物品图标（有素材贴图居中，无素材回退名字文字）
-                    icon = get_item_icon(item.id)
-                    if icon is not None:
-                        icon_surf = fit_icon(icon, 48)
-                        off = (slot_size - 48) // 2
-                        screen.blit(icon_surf, (sx + off, sy + off))
-                    else:
-                        color = self._rarity_color(item.rarity)
-                        name_text = font.render(item.name[:2], True, color)
-                        screen.blit(name_text, (sx + 4, sy + 4))
-                    # 数量
-                    if item.count > 1:
-                        cnt_text = font.render(f"x{item.count}", True, (255, 255, 255))
-                        screen.blit(cnt_text, (sx + slot_size - 20, sy + slot_size - 20))
+        # 装备槽
+        pygame.draw.rect(screen, (30, 30, 40), self.equip_rect, border_radius=4)
+        pygame.draw.rect(screen, (120, 100, 60), self.equip_rect, 2, border_radius=4)
+        eq_label = font.render("装备", True, (220, 200, 100))
+        screen.blit(eq_label, (self.equip_rect.x + 6, self.equip_rect.y + 4))
+        # 显示当前武器
+        weapon = self.inventory.equipped_weapon
+        if weapon:
+            wx = self.equip_rect.x + 6
+            wy = self.equip_rect.y + 28
+            icon = get_item_icon(weapon.id)
+            if icon is not None:
+                screen.blit(fit_icon(icon, 20), (wx, wy + 1))
+                wx += 24
+            w_text = font.render(f"武器: {weapon.name}", True, (255, 255, 255))
+            screen.blit(w_text, (wx, wy))
+            mod = weapon.stat_modifiers
+            mod_text = font.render(
+                f"ATK+{mod.atk_bonus} DEF+{mod.def_bonus}", True, (180, 180, 180)
+            )
+            screen.blit(mod_text, (self.equip_rect.x + 6, self.equip_rect.y + 50))
         else:
-            # 遗物页：列出已拥有的遗物
-            self._draw_relic_page(screen, font)
+            w_text = font.render("武器: 无", True, (150, 150, 150))
+            screen.blit(w_text, (self.equip_rect.x + 6, self.equip_rect.y + 28))
 
-    def _draw_relic_page(self, screen, font) -> None:
-        """遗物标签页：逐行显示已拥有的遗物（色块图标 + 名称 + 完整描述）。"""
-        relics = getattr(self.player, "relics", []) if self.player is not None else []
-        x0 = self.equip_rect.x
-        y = self.equip_rect.y
-        if not relics:
-            empty = font.render("尚未获得任何遗物", True, (150, 150, 160))
-            screen.blit(empty, (x0, y))
-            return
-        row_h = 30
-        for rid in relics:
-            data = RELICS.get(rid)
-            if data is None:
-                continue
-            # 占位图标：色块 + 单字（后续可替换素材）
-            pygame.draw.rect(screen, data["color"], (x0, y, 20, 20), border_radius=4)
-            pygame.draw.rect(screen, (20, 20, 30), (x0, y, 20, 20), 1, border_radius=4)
-            ch = data.get("short") or data["name"][:1]
-            ch_s = font.render(ch, True, (20, 20, 30))
-            screen.blit(ch_s, ch_s.get_rect(center=(x0 + 10, y + 10)))
-            # 名称 + 描述
-            name_s = font.render(data["name"], True, (255, 220, 120))
-            screen.blit(name_s, (x0 + 28, y))
-            desc_s = font.render(data["description"], True, (200, 200, 210))
-            screen.blit(desc_s, (x0 + 28 + name_s.get_width() + 12, y))
-            y += row_h
+        # 物品栏（5 列 × 2 行 = 10 槽）
+        slot_size = 64
+        gap = 8
+        for i in range(self.inventory.MAX_SLOTS):
+            col = i % 5
+            row = i // 5
+            sx = self.slots_rect.x + col * (slot_size + gap)
+            sy = self.slots_rect.y + row * (slot_size + gap)
+            rect = pygame.Rect(sx, sy, slot_size, slot_size)
+            pygame.draw.rect(screen, (30, 30, 40), rect, border_radius=4)
+            pygame.draw.rect(screen, (80, 80, 100), rect, 1, border_radius=4)
+            item = self.inventory.get_item(i)
+            if item:
+                # 物品图标（有素材贴图居中，无素材回退名字文字）
+                icon = get_item_icon(item.id)
+                if icon is not None:
+                    icon_surf = fit_icon(icon, 48)
+                    off = (slot_size - 48) // 2
+                    screen.blit(icon_surf, (sx + off, sy + off))
+                else:
+                    color = self._rarity_color(item.rarity)
+                    name_text = font.render(item.name[:2], True, color)
+                    screen.blit(name_text, (sx + 4, sy + 4))
+                # 数量
+                if item.count > 1:
+                    cnt_text = font.render(f"x{item.count}", True, (255, 255, 255))
+                    screen.blit(cnt_text, (sx + slot_size - 20, sy + slot_size - 20))
 
     def _rarity_color(self, rarity) -> tuple[int, int, int]:
         """稀有度颜色。"""
@@ -234,14 +176,6 @@ class InventoryMenu:
         if self.btn_close.handle_click(pos):
             if self.on_close:
                 self.on_close()
-            return True
-        # 标签页切换（物品 / 遗物）
-        for i, rect in enumerate(self.tab_rects):
-            if rect.collidepoint(pos):
-                self.current_tab = i
-                return True
-        # 遗物页：无可点击物品槽，直接消费点击
-        if self.current_tab == 1:
             return True
         # 检测物品栏点击
         slot_size = 64

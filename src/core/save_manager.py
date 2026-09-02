@@ -130,10 +130,6 @@ def save_game(
             "gold": player.gold,
             "skills": [s.id for s in player.skills],
             "talents": list(getattr(player, "talents", [])),
-            # 遗物：携带列表 / 已拥有集合（图鉴解锁）/ 守护符本层使用标记
-            "relics": list(getattr(player, "relics", [])),
-            "owned_relics": list(getattr(player, "owned_relics", [])),
-            "layer_guard_used": bool(getattr(player, "layer_guard_used", False)),
             **_serialize_stats(player),
         },
         "inventory": items,
@@ -172,12 +168,6 @@ def apply_save_to_player(player, data: dict) -> None:
     # 避免序列化值与天赋重放叠加导致翻倍
     for tid in p.get("talents", []):
         player.learn_talent(tid)
-    # 恢复遗物：先还原携带列表/已拥有集合/守护符使用标记，
-    # 再幂等重放"获得即改属性"效果（如巨人之力），随后属性由存档值精确覆盖
-    player.relics = list(p.get("relics", []))
-    player.owned_relics = set(p.get("owned_relics", []))
-    player.layer_guard_used = bool(p.get("layer_guard_used", False))
-    player.apply_relic_effects()
     player.stats.max_hp = p["max_hp"]
     player.stats.hp = min(p["hp"], p["max_hp"])
     player.stats.atk = p["atk"]

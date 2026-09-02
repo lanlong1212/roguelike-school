@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import TYPE_CHECKING, cast
 
-from src.combat.action import Action, EndTurnAction, MoveAction, SkillAction
+from src.combat.action import Action, EndTurnAction, SkillAction
 from src.combat.status_effect import EffectType
 from src.entities.entity import Entity
 
@@ -32,33 +32,6 @@ class TurnPhase(Enum):
     ENEMY_TURN = auto()    # 敌人行动中
     BATTLE_WON = auto()    # 玩家胜
     BATTLE_LOST = auto()   # 玩家败
-
-
-def roll_relic_drop(enemy_type: str, player: "Player") -> str:
-    """精英/Boss 击杀后的遗物掉落结算（docs/遗物系统 3.1）。
-
-    enemy_type: "elite"（40% 概率掉落）/ "boss"（必然掉落）。
-    规则：
-        - 随机选一个尚未拥有的遗物 ID 授予玩家
-        - 全部遗物已拥有 → 改为获得 25 金币（重复保护）
-        - 获得遗物后应用立即生效的属性修改（如巨人之力）
-    返回掉落提示文本（空串表示未触发掉落），供 HUD 飘字显示。
-    """
-    import random
-
-    from src.items.relics import RELICS, grant_relic, get_relic_name
-
-    # 精英 40% 概率；Boss 必然掉落
-    if enemy_type == "elite" and random.random() >= 0.4:
-        return ""
-    # 从尚未拥有的遗物中随机选取（重复保护：集齐后改为 25 金币）
-    pool = [rid for rid in RELICS if rid not in player.owned_relics]
-    if not pool:
-        player.gold += 25
-        return "遗物已集齐，获得 25 金币"
-    relic_id = random.choice(pool)
-    grant_relic(player, relic_id)
-    return f"获得遗物：{get_relic_name(relic_id)}"
 
 
 class BattleManager:
@@ -171,17 +144,8 @@ class BattleManager:
         if not self.can_execute(action):
             return False
 
-        actor = self.current_actor
         # 扣 AP（EndTurnAction cost=0 也会进入这里）
-        # 遗物：轻羽靴 —— 玩家每回合首次移动不耗 AP。
-        # 移动后无论是否免费都记录 moved_this_turn（供"未移动"类效果判定）。
-        is_player_move = isinstance(action, MoveAction) and actor is self.player
-        if is_player_move:
-            if self.player.moved_this_turn or "light_boots" not in self.player.relics:
-                actor.stats.spend_ap(action.ap_cost)
-            self.player.moved_this_turn = True
-        else:
-            actor.stats.spend_ap(action.ap_cost)
+        self.current_actor.stats.spend_ap(action.ap_cost)
         # 执行行动效果
         action.execute(self)
         # 行动可能造成友方单位阵亡（AoE 溅射等）：标记死亡并切回主角
@@ -302,8 +266,6 @@ class BattleManager:
         """切换到玩家回合：敌人状态结算、重置 AP、回合计数 +1。"""
         self.phase = TurnPhase.PLAYER_TURN
         self.turn_count += 1
-        # 遗物：轻羽靴 —— 每回合首次移动标记重置
-        self.player.moved_this_turn = False
         # 敌人回合结束：敌人状态时长 -1（冻结/感电/破甲等）
         for enemy in self.enemies:
             if not enemy.stats.is_dead():

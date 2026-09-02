@@ -235,18 +235,6 @@ class Player(Entity):
         self.gold: int = config.START_GOLD
         # 已学天赋 id 列表（被动天赋，学习即生效）
         self.talents: list[str] = []
-        # ========== 遗物系统（docs/遗物系统） ==========
-        # 当前携带的遗物 ID 列表（效果跨战斗持续，随存档保存）
-        self.relics: list[str] = []
-        # 本局已获得过的遗物 ID 集合（图鉴解锁用；重复掉落不再计数）
-        self.owned_relics: set[str] = set()
-        # 本回合是否已移动（轻羽靴：每回合首次移动不耗 AP；回合开始由战斗管理器重置）
-        self.moved_this_turn: bool = False
-        # 本层守护符是否已使用（守护符：每层首次受伤免疫；下楼重置）
-        self.layer_guard_used: bool = False
-        # 已应用"获得即改属性"效果的遗物 ID 集合（读档重放幂等保护；
-        # 只影响属性类遗物如巨人之力，被动类遗物按 ID 实时查询不在此列）
-        self._applied_relic_effects: set[str] = set()
         # 守护光环（伙伴天生被动）：伙伴存活时主角每回合首次受伤 -2。
         # guardian_halo_active 由 battle_manager 在回合开始/伙伴阵亡时维护；
         # guardian_halo_used 每回合首次受伤后置 True，回合开始重置。
@@ -307,28 +295,6 @@ class Player(Entity):
             Talent(id=t.id, name=t.name, desc=t.desc)
             for t in _TALENT_POOL if t.id not in self.talents
         ]
-
-    # ========== 遗物接口 ==========
-
-    def apply_relic_effects(self) -> None:
-        """重放"获得即改属性"遗物的效果（读档恢复 relics 后调用一次）。
-
-        幂等设计：已应用过加成的遗物先反向还原回基础值，再统一重新应用，
-        重复调用结果一致，不会叠加；与天赋"先重放再由存档值精确覆盖"
-        的模式配合，避免读档后属性翻倍。
-        """
-        from src.items.relics import apply_relic_effect, revert_relic_effect
-
-        # 1. 已应用过加成的遗物先还原回基础值
-        for rid in self.relics:
-            if rid in self._applied_relic_effects:
-                revert_relic_effect(self, rid)
-                self._applied_relic_effects.discard(rid)
-        # 2. 统一重新应用（被动类遗物无属性分支，自然跳过）
-        for rid in self.relics:
-            if rid not in self._applied_relic_effects:
-                apply_relic_effect(self, rid)
-                self._applied_relic_effects.add(rid)
 
     # ========== 技能接口 ==========
 
