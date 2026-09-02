@@ -22,10 +22,10 @@ from src.ui.ui_element import Button, Panel, Text
 class PauseMenu:
     """暂停菜单。"""
 
-    def __init__(self, on_resume=None, on_quit=None):
+    def __init__(self, on_resume=None, on_quit=None, on_help=None):
         sw, sh = config.SCREEN_WIDTH, config.SCREEN_HEIGHT
         # 中央面板
-        panel_w, panel_h = 300, 200
+        panel_w, panel_h = 300, 240
         panel_x = (sw - panel_w) // 2
         panel_y = (sh - panel_h) // 2
         self.panel = Panel(pygame.Rect(panel_x, panel_y, panel_w, panel_h))
@@ -41,12 +41,17 @@ class PauseMenu:
             pygame.Rect(btn_x, panel_y + 70, btn_w, btn_h),
             "继续游戏 (ESC)", on_click=on_resume,
         )
-        self.btn_quit = Button(
+        self.btn_help = Button(
             pygame.Rect(btn_x, panel_y + 120, btn_w, btn_h),
+            "图鉴 (F1)", on_click=on_help,
+            color=(45, 55, 90),
+        )
+        self.btn_quit = Button(
+            pygame.Rect(btn_x, panel_y + 170, btn_w, btn_h),
             "返回主菜单", on_click=on_quit,
             color=(80, 30, 30),
         )
-        self.buttons: list[Button] = [self.btn_resume, self.btn_quit]
+        self.buttons: list[Button] = [self.btn_resume, self.btn_help, self.btn_quit]
 
     def update(self, dt: float) -> None:
         for btn in self.buttons:

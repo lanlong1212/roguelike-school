@@ -26,6 +26,7 @@ from src.core.asset_manager import resource_root
 from src.entities.enemy import Enemy
 from src.entities.player import Player, Skill, get_skill_pool
 from src.states.base_state import BaseState
+from src.ui.help_panel import HelpPanel
 from src.ui.hud import HUD
 from src.ui.icons import get_element_icon
 from src.ui.menu import InventoryMenu, PotionTargetMenu, RestMenu, ShopMenu
@@ -196,6 +197,8 @@ class PlayState(BaseState):
         # 友方单位列表（阶段 3：可控伙伴；未来可追加更多同类角色）。
         # 现有代码通过 _companion property 读取第一个伙伴，新增角色 append 即可。
         self._allies: list = []
+        # 图鉴帮助面板（覆盖层，不压状态栈）；None = 未打开
+        self.help_panel: HelpPanel | None = None
 
     # ========== 生命周期 ==========
 
@@ -282,6 +285,12 @@ class PlayState(BaseState):
     # ========== 输入 ==========
 
     def handle_event(self, event):
+        # 图鉴面板打开时：优先交给图鉴处理（键盘/鼠标全部消费）。
+        # handle_event 返回 False → 面板请求关闭，置空引用恢复游戏。
+        if self.help_panel is not None:
+            if not self.help_panel.handle_event(event):
+                self.help_panel = None
+            return
         # 方向键按下顺序记录（任何界面状态下都维护，保证长按方向状态一致）
         if event.type == pygame.KEYUP:
             if event.key in self._key_order:
@@ -314,6 +323,11 @@ class PlayState(BaseState):
                     return
                 from src.states.pause_state import PauseState
                 self.game.push_state(PauseState(self.game, play_state=self))
+                return
+
+            # F1 → 打开图鉴（任意界面下可用；打开时再按 F1 由上方 help_panel 分支关闭）
+            if event.key == pygame.K_F1:
+                self.help_panel = HelpPanel()
                 return
 
             # V 键 → 收起/展开状态面板（避免血条挡住地图上的敌人）
@@ -415,6 +429,10 @@ class PlayState(BaseState):
 
     def update(self, dt):
         """每帧推进敌人回合 + 飘字动画 + 实体动画。"""
+        # 图鉴打开时暂停全部游戏逻辑（类似暂停，底层画面保留供遮罩下显示）
+        if self.help_panel is not None:
+            self.help_panel.update(dt)
+            return
         # 飘字更新（无论何种模式）
         if self._floating_texts:
             self._floating_texts = [t for t in self._floating_texts if t.update(dt)]
@@ -1458,6 +1476,10 @@ class PlayState(BaseState):
         if self._rest_menu is not None:
             self._rest_menu.update(0)
             self._rest_menu.draw(screen, self.game.font, self.game.font_small)
+        # 图鉴帮助面板：覆盖在所有游戏元素之上
+        if self.help_panel is not None:
+            self.help_panel.update(0)
+            self.help_panel.draw(screen, self.game.font, self.game.font_small)
 
     def _draw_battle_highlights(self, screen, cam_x, cam_y, ts) -> None:
         """绘制可移动（蓝）/可攻击（红）半透明高亮。"""
